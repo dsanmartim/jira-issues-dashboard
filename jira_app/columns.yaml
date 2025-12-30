@@ -1,0 +1,54 @@
+# Column configuration (override defaults). Users can reorder/remove.
+sets:
+  detail:
+    - Ticket
+    - summary
+    - priority
+    - priority_value
+    - status
+    - time_lost
+    - days_open
+    - labels
+    - obs_system
+    - obs_subsystem
+    - obs_component
+    - days_since_update
+    - created
+    - updated
+    - assignee
+    - reporter
+    - resolution
+  core:
+    - key
+    - summary
+    - priority
+    - priority_value
+    - status
+    - time_lost
+    - labels
+    - obs_system
+    - obs_subsystem
+    - obs_component
+    - days_open
+    - days_since_update
+    - created
+    - updated
+    - assignee
+    - reporter
+    - resolution
+  ticket_list:
+    - Ticket
+    - summary
+    - priority
+    - assignee
+    - status
+    - time_lost
+    - days_open
+    - days_since_update
+    - created
+    - updated
+    - labels
+    - obs_system
+    - obs_subsystem
+    - obs_component
+    - reporter

@@ -1,0 +1,37 @@
+[tool.ruff]
+line-length = 110
+# Ruff used for linting only; formatting handled by Black.
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "C4"]
+ignore = ["E203"]
+
+[tool.black]
+line-length = 110
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
+strict_optional = true
+check_untyped_defs = true
+no_implicit_reexport = true
+show_error_codes = true
+
+[project]
+name = "jira-modular-dashboard"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+	"pytest>=8.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=63", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["jira_app*"]
+exclude = ["tests*"]
