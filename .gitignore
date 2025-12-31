@@ -28,4 +28,5 @@ dist/
 *.egg-info/
 
 # Data files (keep if generated locally)
+data/*.json
 *.json
