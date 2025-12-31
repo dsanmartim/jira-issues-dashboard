@@ -25,7 +25,7 @@ from jira_app.visual.charts import blocker_critical_trend, created_trend
 from jira_app.visual.column_metadata import apply_column_metadata
 from jira_app.visual.progress import ProgressReporter
 from jira_app.visual.tables import prepare_ticket_table
-from jira_app.visual.wordcloud import wordcloud_png
+from jira_app.visual.wordcloud import WORDCLOUD_AVAILABLE, wordcloud_png
 
 DONE_STATUSES = {"done", "resolved", "closed", "cancelled", "completed", "duplicate", "duplicated"}
 CRITICAL_PREFIXES = ("Blocker", "Critical")
@@ -777,7 +777,7 @@ def display_leaderboard(
         prepared[display_cols],
         hide_index=True,
         column_config=column_config,
-        use_container_width=True,
+        width="stretch",
     )
 
     if caption:
@@ -785,11 +785,15 @@ def display_leaderboard(
 
 
 def render_wordcloud(text: str) -> None:
+    if not WORDCLOUD_AVAILABLE:
+        st.warning("Word cloud library not installed. Install 'wordcloud' to enable this chart.")
+        return
+
     image_bytes = wordcloud_png(text)
     if image_bytes:
-        st.image(image_bytes, use_container_width=True)
+        st.image(image_bytes, width="stretch")
     else:
-        st.write("Not enough text data to generate a word cloud.")
+        st.warning("Text input was too small to build a word cloud.")
 
 
 def display_ticket_list(
@@ -803,7 +807,7 @@ def display_ticket_list(
     sort_by: str | None = None,
     ascending: bool = True,
     extra_columns: list[str] | None = None,
-    height: int | None = None,
+    height: int | str | None = None,
     reorder_like_topn: bool = False,
     caption: str | None = None,
 ) -> None:
@@ -837,6 +841,13 @@ def display_ticket_list(
         additional_cols.append(target_label)
 
     prepared, base_display_cols, cfg = prepare_ticket_table(table, server, extra_columns=additional_cols)
+    if height is None:
+        # Default height sized to top-N rows to keep tables compact with scroll for overflow
+        target_rows = int(st.session_state.get("top_n", 15)) if "top_n" in st.session_state else 15
+        visible_rows = min(target_rows, len(prepared))
+        resolved_height: int | str = max(200, 46 + visible_rows * 34)
+    else:
+        resolved_height = height
 
     # Optional: reorder columns to match the Top N ordering style
     if reorder_like_topn:
@@ -892,8 +903,8 @@ def display_ticket_list(
             prepared[final_cols],
             hide_index=True,
             column_config=column_config,
-            use_container_width=True,
-            height=height,
+            width="stretch",
+            height=resolved_height,
         )
         if caption:
             st.caption(caption)
@@ -905,8 +916,8 @@ def display_ticket_list(
         prepared[base_display_cols],
         hide_index=True,
         column_config=column_config,
-        use_container_width=True,
-        height=height,
+        width="stretch",
+        height=resolved_height,
     )
     if caption:
         st.caption(caption)
@@ -1498,10 +1509,10 @@ def render():
         if status_chart:
             st.altair_chart(
                 status_chart.properties(height=shared_panel_height),
-                use_container_width=True,
+                width="stretch",
             )
         else:
-            st.dataframe(counts, hide_index=True, use_container_width=True)
+            st.dataframe(counts, hide_index=True, width="stretch")
     else:
         st.info("No status data available.")
 
@@ -1912,7 +1923,7 @@ def render():
                         .properties(height=alt.Step(22))
                     )
                     open_chart = bg + fg
-                    st.altair_chart(open_chart, use_container_width=True)
+                    st.altair_chart(open_chart, width="stretch")
                     st.markdown(
                         "<div style='font-size:12px;color:#666;'>"
                         "<span style='display:inline-block;width:10px;height:10px;background:#e6e6e6;"
@@ -1946,7 +1957,7 @@ def render():
                         )
                         .properties(height=alt.Step(22))
                     )
-                    st.altair_chart(age_chart, use_container_width=True)
+                    st.altair_chart(age_chart, width="stretch")
                     st.markdown(
                         "<div style='font-size:12px;color:#666;'>"
                         "<span style='display:inline-block;width:10px;height:10px;"
@@ -1981,7 +1992,7 @@ def render():
         for tab, (chart_label, chart_obj, chart_desc) in zip(chart_tabs, obs_charts, strict=False):
             with tab:
                 if chart_obj is not None:
-                    st.altair_chart(chart_obj, use_container_width=True)
+                    st.altair_chart(chart_obj, width="stretch")
                     st.caption(chart_desc)
                 else:
                     st.info(f"No data available to plot {chart_label.lower()}.")
@@ -2157,7 +2168,7 @@ def render():
                         st.dataframe(
                             stats,
                             hide_index=True,
-                            use_container_width=True,
+                            width="stretch",
                             column_config={
                                 "Priority": st.column_config.Column(
                                     "Priority",
@@ -2247,7 +2258,7 @@ def render():
                         bin_step=bin_step,
                     )
                     if status_chart is not None:
-                        st.altair_chart(status_chart, use_container_width=True)
+                        st.altair_chart(status_chart, width="stretch")
 
                 summary_table = (
                     filtered.groupby("status")["duration_days"]
@@ -2260,7 +2271,7 @@ def render():
                 st.dataframe(
                     summary_table,
                     hide_index=True,
-                    use_container_width=True,
+                    width="stretch",
                     column_config={
                         "Status": st.column_config.Column(
                             "Status",
@@ -2543,7 +2554,7 @@ def render():
                             )
                             .properties(height=alt.Step(22))
                         )
-                        st.altair_chart(chart, use_container_width=True)
+                        st.altair_chart(chart, width="stretch")
                         # Caption below chart explaining the metric
                         metric_help_map = {m_col: m_help for (m_col, _m_title, m_help) in metrics}
                         desc = metric_help_map.get(col) or ""
@@ -2620,14 +2631,14 @@ def render():
 
         st.subheader("Created Issues Over Time")
         if created_chart:
-            st.altair_chart(created_chart, use_container_width=True)
+            st.altair_chart(created_chart, width="stretch")
             st.caption("Unfiltered: shows all issues created in the selected date window.")
         else:
             st.info("No created issues in the selected period.")
 
         st.subheader("Blocker/Critical Updates")
         if blocker_chart:
-            st.altair_chart(blocker_chart, use_container_width=True)
+            st.altair_chart(blocker_chart, width="stretch")
         else:
             st.info("No blocker/critical activity in the selected period.")
 
@@ -2697,7 +2708,7 @@ def render():
                     prepared_drill[drill_cols],
                     hide_index=True,
                     column_config=drill_cfg,
-                    use_container_width=True,
+                    width="stretch",
                 )
             else:
                 st.info("No tickets were created on that date.")

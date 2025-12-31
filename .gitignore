@@ -1,8 +1,31 @@
-__pycache__/*
-modules/__pycache__/*
+# Python bytecode / cache
+__pycache__/
+modules/__pycache__/
+*.py[cod]
+
+# Jupyter notebooks
 *.ipynb
-*.pyc
-*.pyo
-.venv/*
-.streamlit/*
+
+# Virtual environments
+.venv/
+.env/
+
+# Local Streamlit state
+.streamlit/
+
+# OS junk
+.DS_Store
+
+# Logs and coverage
+*.log
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build outputs / packaging
+build/
+dist/
+*.egg-info/
+
+# Data files (keep if generated locally)
 *.json

@@ -140,7 +140,7 @@ def _render_metric_tabs(
                 .properties(height=alt.Step(int(metric.get("row_height", 22))))
             )
 
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, width="stretch")
             if help_text:
                 st.caption(help_text)
 
@@ -370,7 +370,7 @@ def render_reporter_tab(df: pd.DataFrame, server: str) -> None:
             st.dataframe(
                 prepared[display_cols],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 column_config=column_config,
             )
             st.caption(
