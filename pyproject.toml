@@ -20,7 +20,7 @@ no_implicit_reexport = true
 show_error_codes = true
 
 [project]
-name = "jira-modular-dashboard"
+name = "jira-issues-dashboard"
 version = "0.1.0"
 requires-python = ">=3.13.11"
 dependencies = [
