@@ -11,6 +11,8 @@ try:
 except Exception:  # pragma: no cover
     WordCloud = None  # type: ignore
 
+WORDCLOUD_AVAILABLE = WordCloud is not None
+
 
 @st.cache_data(show_spinner=False)
 def wordcloud_png(text: str, width: int = 600, height: int = 260, bg: str = "white") -> bytes | None:

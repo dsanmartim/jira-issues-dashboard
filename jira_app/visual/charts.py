@@ -43,7 +43,10 @@ def created_trend(df: pd.DataFrame, start, end, priorities=None):
 
     agg = (
         tmp.groupby("date")
-        .apply(lambda g: pd.Series({"count": int(len(g)), "tickets": _format_ticket_list(g)}))
+        .apply(
+            lambda g: pd.Series({"count": int(len(g)), "tickets": _format_ticket_list(g)}),
+            include_groups=False,
+        )
         .reset_index()
     )
     agg["date"] = pd.to_datetime(agg["date"])
@@ -102,7 +105,10 @@ def blocker_critical_trend(df: pd.DataFrame, start, end):
     tmp["date"] = tmp["updated_dt"].dt.date
     agg = (
         tmp.groupby("date")
-        .apply(lambda g: pd.Series({"count": int(len(g)), "tickets": _format_ticket_list(g)}))
+        .apply(
+            lambda g: pd.Series({"count": int(len(g)), "tickets": _format_ticket_list(g)}),
+            include_groups=False,
+        )
         .reset_index()
     )
     agg["date"] = pd.to_datetime(agg["date"])

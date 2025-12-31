@@ -223,7 +223,7 @@ def render():
                 "current dataset."
             )
             diff_sorted = summary_df.sort_values("Difference (computed - stored)", ascending=False)
-            st.dataframe(diff_sorted, hide_index=True, use_container_width=True)
+            st.dataframe(diff_sorted, hide_index=True, width="stretch")
 
             default_keys = diff_sorted.head(5)["Ticket"].dropna().astype(str).tolist()
             available_keys = diff_sorted["Ticket"].dropna().astype(str).unique().tolist()
@@ -245,7 +245,7 @@ def render():
             st.dataframe(
                 filtered_comments.sort_values(["Ticket", "Comment #"]),
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
 
             csv_data = comment_df.to_csv(index=False).encode("utf-8")
@@ -309,8 +309,8 @@ def render():
         start_dt, end_dt = _get_window_bounds()
         summary_df, comment_df = _build_comment_frames(stored_df, start_dt=start_dt, end_dt=end_dt)
         st.caption("Summary of stored versus recomputed comment counts for the fetched issue.")
-        st.dataframe(summary_df, hide_index=True, use_container_width=True)
+        st.dataframe(summary_df, hide_index=True, width="stretch")
         st.caption("Comment-level detail including authorship and window membership.")
-        st.dataframe(comment_df, hide_index=True, use_container_width=True)
+        st.dataframe(comment_df, hide_index=True, width="stretch")
         if stored_path:
             st.info(f"Raw JSON stored at: {stored_path}")

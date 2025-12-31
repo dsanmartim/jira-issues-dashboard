@@ -33,9 +33,11 @@ JIRA_API_TOKEN = "<api_token>"
 ```
 
 Notes:
-- The launcher also supports top-level `JIRA_SERVER`, `JIRA_EMAIL`, `JIRA_API_TOKEN`.
+- Ensure the `.streamlit` folder exists: `mkdir -p .streamlit`.
+- The launcher also supports top-level `JIRA_SERVER`, `JIRA_EMAIL`, `JIRA_API_TOKEN` if you prefer a flatter secrets file.
+- Tokens: create an API token from your Atlassian account settings (Profile → Security → API tokens) and paste it here.
 - If secrets are missing, use **Setup / Connection** (interactive; not persisted to disk).
-- Never commit secrets.
+- Never commit secrets; keep `.streamlit/secrets.toml` out of version control (it is gitignored).
 
 3) Start the app
 
