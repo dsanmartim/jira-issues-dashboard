@@ -1,0 +1,37 @@
+# ---- VCS ----
+.git
+.github
+
+# ---- Python bytecode / caches ----
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ---- Virtualenvs ----
+.venv/
+venv/
+
+# ---- Tool caches ----
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ---- Build artifacts ----
+build/
+dist/
+*.egg-info/
+
+# ---- Local IDE/editor ----
+.vscode/
+.idea/
+.DS_Store
+
+# ---- Secrets / local config ----
+.env
+.env.*
+.streamlit/secrets.toml
+
+# ---- Local data files ----
+data/

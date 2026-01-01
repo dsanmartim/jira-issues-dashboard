@@ -1,6 +1,6 @@
-# Jira Issues Dashboard (Streamlit)
+# Jira Issues Dashboard
 
-Streamlit app for analyzing Jira issues for the OBS project (activity, aging/staleness, trends, and persona insights).
+A Streamlit dashboard for analyzing Jira project issues (activity, aging/staleness, trends, persona insights, etc).
 
 ## For users
 
@@ -9,19 +9,120 @@ Streamlit app for analyzing Jira issues for the OBS project (activity, aging/sta
 - Activity + aging/staleness views over Jira issues
 - Trend charts and top ticket tables
 - Persona insights (Assignee / Reporter)
-- Optional OBS hierarchy drilldowns (OBS-only custom field)
+- Optional OBS hierarchy drilldowns
 
-### Running locally
+#### Running the app
 
-1) Set up Python
+Quickstart:
+- Fastest: run with Docker (no Python needed) — see [Run with Docker](#run-with-docker).
+- Tinker/dev: run locally from source with Python 3.13 — see [Running locally (clone the repo)](#running-locally-clone-the-repo).
+
+## Run with Docker
+
+This option lets you run the dashboard by only pulling the Docker image.
+
+### 1. Install Docker
+
+Install Docker Desktop (macOS) or Docker Engine (Linux) from the official website:
+https://www.docker.com/get-started/
+
+### 2. Configure Jira credentials
+
+Create a folder and file anywhere you like, for example:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirement.txt
+mkdir -p ~/.jira-issues-dashboard/.streamlit
+nano ~/.jira-issues-dashboard/.streamlit/secrets.toml
 ```
 
-2) Configure Jira credentials
+Put this inside `secrets.toml`:
+
+```toml
+[jira]
+JIRA_SERVER = "https://your-jira-instance"
+JIRA_EMAIL = "user@example.com"
+JIRA_API_TOKEN = "<api_token>"
+```
+
+Notes:
+- Tokens: create an API token from your Atlassian account settings (Profile → Security → API tokens) and paste it here.
+- Never commit secrets to git.
+
+### 3. Pull and run the container
+
+3.1 Pull the latest image:
+```bash
+docker pull dsanmartim/jira-issues-dashboard:latest
+```
+
+3.2 Run it in the foreground:
+```bash
+docker run --rm -p 8501:8501 \
+  -v "$HOME/.jira-issues-dashboard/.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro" \
+  dsanmartim/jira-issues-dashboard:latest
+```
+
+To stop the container after you are done, press `Ctrl+C` in the terminal.
+
+3.3 Optionally, you can run it in the background and give the container a name.
+```bash
+docker run -d --name jira-dashboard -p 8501:8501 \
+  -v "$HOME/.jira-issues-dashboard/.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro" \
+  dsanmartim/jira-issues-dashboard:latest
+```
+
+In this case, to stop/remove the container later, just run the following command:
+```bash
+docker stop jira-dashboard && docker rm jira-dashboard
+```
+
+### 4. Access the app
+
+Go to your browser and open: http://localhost:8501
+
+Notes:
+- Port 8501 must be free on your machine; change the left side of `-p` if needed.
+- You can place the secrets file anywhere; update the host path in `-v` to match.
+- If you skip mounting secrets, you can enter them in the app via the **Setup / Connection** page (not persistent, though).
+
+### Updating the app
+
+The `latest` tag is **mutable**. When a new image is pushed to Docker Hub with the `latest` tag, the tag is updated to point to the most recent image version. Users who run `docker pull dsanmartim/jira-issues-dashboard:latest` after that will download the newest version.
+
+If you already pulled `:latest` in the past, run `docker pull ...:latest` again to update your local copy.
+
+---
+
+## Running locally
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/dsanmartim/jira-issues-dashboard.git
+cd jira-issues-dashboard
+```
+
+### 2. Set up Python (Python 3.13)
+
+This project targets **Python 3.13.x**. Before creating the virtual environment, confirm you are using Python 3.13:
+
+```bash
+python3 --version
+```
+
+If needed, install Python 3.13 and make sure `python3` points to it.
+
+Then create and activate a virtual environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install .            # runtime only
+# or, for local dev tools (pytest, ruff, black, pre-commit):
+pip install -e ".[dev]"
+```
+
+### 3. Configure Jira credentials
 
 Create `.streamlit/secrets.toml` in the repo root:
 
@@ -39,7 +140,7 @@ Notes:
 - If secrets are missing, use **Setup / Connection** (interactive; not persisted to disk).
 - Never commit secrets; keep `.streamlit/secrets.toml` out of version control (it is gitignored).
 
-3) Start the app
+### 4. Start the app
 
 ```bash
 streamlit run run_dashboard.py
@@ -47,7 +148,32 @@ streamlit run run_dashboard.py
 
 `run_dashboard.py` auto-imports every module in `jira_app/pages/` so each page decorated with `@register_page(...)` registers itself.
 
-### Pages
+Quick recipe (all steps in one go):
+
+```bash
+git clone <your-repo-url> jira-issues-dashboard && cd jira-issues-dashboard
+python3.13 -m venv .venv && source .venv/bin/activate
+pip install .
+mkdir -p .streamlit && cat > .streamlit/secrets.toml <<'EOF'
+[jira]
+JIRA_SERVER = "https://your-jira-instance"
+JIRA_EMAIL = "user@example.com"
+JIRA_API_TOKEN = "<api_token>"
+EOF
+```
+Run it:
+
+```bash
+streamlit run run_dashboard.py
+```
+
+What it does: clones the repo, creates a Python 3.13 venv, installs the app, writes the secrets file, then launches Streamlit. Adjust the Jira values, and finally run the app.
+
+---
+
+## What to expect in the app
+
+The app has the following main views:
 
 - **Activity Overview** (`jira_app/pages/activity_overview.py`)
   - Main view: activity + aging + trends + top ticket tables
@@ -60,7 +186,9 @@ streamlit run run_dashboard.py
 - **Setup / Connection** (`jira_app/pages/setup.py`)
   - Initializes `IssueService` and stores it in Streamlit session state
 
-## For developers (adapting the app)
+---
+
+## For developers (contributing / adapting the app)
 
 ### High-level architecture
 
@@ -127,6 +255,8 @@ Commonly added by the enrichment pipeline:
 
 The source of truth for “what gets computed when” is `jira_app/core/service.py`.
 
+---
+
 ## OBS project-specific custom fields
 
 This app is currently optimized for the OBS Jira project and uses two OBS-specific custom fields.
@@ -142,6 +272,8 @@ If you point the tool at a Jira project that does not have these fields:
 - The mapping should safely produce empty/None values for these columns.
 - Views that depend on these fields may show “Unknown”/empty groupings or reduced insights.
 
+---
+
 ## Portability (adapting to another project)
 
 Today, adapting this repo to a different Jira project typically requires code/config changes because:
@@ -153,6 +285,8 @@ Roadmap for making this more “drop-in” for external users:
 - Provide feature toggles (enable/disable hierarchy and time-lost features).
 - Make segmentation dimensions robust when optional columns are missing.
 
+---
+
 ## Configuration knobs
 
 Most behavior lives in `jira_app/core/config.py`, including:
@@ -161,6 +295,8 @@ Most behavior lives in `jira_app/core/config.py`, including:
 - Jira base field list (`JIRA_FETCH_BASE_FIELDS`)
 
 Column ordering defaults are in `jira_app/columns.yaml` and shared display constants in `jira_app/core/config.py`.
+
+---
 
 ## Development
 
@@ -177,6 +313,8 @@ pip install pre-commit
 pre-commit install
 pre-commit run --all-files
 ```
+
+---
 
 ## License
 
