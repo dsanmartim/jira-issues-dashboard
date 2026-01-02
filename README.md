@@ -21,75 +21,82 @@ Quickstart:
 
 This option lets you run the dashboard by only pulling the Docker image.
 
-### 1. Install Docker
+### 1. One-time setup
 
-Install Docker Desktop (macOS) or Docker Engine (Linux) from the official website:
-https://www.docker.com/get-started/
-
-### 2. Configure Jira credentials
-
-Create a folder and file anywhere you like, for example:
+Install Docker (Desktop or Engine): https://www.docker.com/get-started/
+2) Create your secrets file and put your real Jira values in it:
 
 ```bash
 mkdir -p ~/.jira-issues-dashboard/.streamlit
-nano ~/.jira-issues-dashboard/.streamlit/secrets.toml
+vim ~/.jira-issues-dashboard/.streamlit/secrets.toml
 ```
 
-Put this inside `secrets.toml`:
+Paste this template, then replace the placeholders before saving:
 
 ```toml
 [jira]
-JIRA_SERVER = "https://your-jira-instance"
-JIRA_EMAIL = "user@example.com"
-JIRA_API_TOKEN = "<api_token>"
+JIRA_SERVER = "https://your-jira-instance"   # replace with your Jira base URL
+JIRA_EMAIL = "user@example.com"               # replace with your Jira email/login
+JIRA_API_TOKEN = "<api_token>"               # replace with your API token
 ```
 
 Notes:
-- Tokens: create an API token from your Atlassian account settings (Profile → Security → API tokens) and paste it here.
+- Tokens: create an API token from your Atlassian account settings (Profile → Account Settings → Security → API tokens) and paste it here.
 - Never commit secrets to git.
 
-### 3. Pull and run the container
+### 2. Start/stop the app (anytime)
 
-3.1 Pull the latest image:
+Pull (or refresh) the image when you want the latest build:
+
 ```bash
 docker pull dsanmartim/jira-issues-dashboard:latest
 ```
 
-3.2 Run it in the foreground:
+Run it in the foreground:
 ```bash
 docker run --rm -p 8501:8501 \
   -v "$HOME/.jira-issues-dashboard/.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro" \
   dsanmartim/jira-issues-dashboard:latest
 ```
 
-To stop the container after you are done, press `Ctrl+C` in the terminal.
+To stop the application, just press Ctrl+C in that terminal.
 
-3.3 Optionally, you can run it in the background and give the container a name.
+Optionally, you can name and run the container in the background:
+
 ```bash
 docker run -d --name jira-dashboard -p 8501:8501 \
   -v "$HOME/.jira-issues-dashboard/.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro" \
   dsanmartim/jira-issues-dashboard:latest
 ```
 
-In this case, to stop/remove the container later, just run the following command:
+In this case, to stop/remove the container later:
+
 ```bash
 docker stop jira-dashboard && docker rm jira-dashboard
 ```
 
-### 4. Access the app
+**Making it easier:** add a helper alias to your shell (e.g., ~/.zshrc or ~/.bashrc) for the background run:
 
-Go to your browser and open: http://localhost:8501
+```bash
+echo "alias jira-dashboard-start='docker run -d --name jira-dashboard -p 8501:8501 -v \"$HOME/.jira-issues-dashboard/.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro\" dsanmartim/jira-issues-dashboard:latest'" >> ~/.zshrc
+echo "alias jira-dashboard-stop='docker stop jira-dashboard && docker rm jira-dashboard'" >> ~/.zshrc
+```
+Reload your shell (`source ~/.zshrc`) and use `jira-dashboard-start` / `jira-dashboard-stop`.
+
+### 3. Access the app
+
+Open: http://localhost:8501
 
 Notes:
 - Port 8501 must be free on your machine; change the left side of `-p` if needed.
 - You can place the secrets file anywhere; update the host path in `-v` to match.
-- If you skip mounting secrets, you can enter them in the app via the **Setup / Connection** page (not persistent, though).
+- If you skip mounting secrets, you can enter them in the app via the **Setup / Connection** page (not persistent).
 
-### Updating the app
+### 4. Updating the app (at a glance)
 
-The `latest` tag is **mutable**. When a new image is pushed to Docker Hub with the `latest` tag, the tag is updated to point to the most recent image version. Users who run `docker pull dsanmartim/jira-issues-dashboard:latest` after that will download the newest version.
-
-If you already pulled `:latest` in the past, run `docker pull ...:latest` again to update your local copy.
+- Pull the newest image: `docker pull dsanmartim/jira-issues-dashboard:latest`
+- If running in background: `docker stop jira-dashboard && docker rm jira-dashboard`
+- Start again (background): `docker run -d --name jira-dashboard -p 8501:8501 -v "$HOME/.jira-issues-dashboard/.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro" dsanmartim/jira-issues-dashboard:latest`
 
 ---
 
@@ -136,7 +143,7 @@ JIRA_API_TOKEN = "<api_token>"
 Notes:
 - Ensure the `.streamlit` folder exists: `mkdir -p .streamlit`.
 - The launcher also supports top-level `JIRA_SERVER`, `JIRA_EMAIL`, `JIRA_API_TOKEN` if you prefer a flatter secrets file.
-- Tokens: create an API token from your Atlassian account settings (Profile → Security → API tokens) and paste it here.
+- Tokens: create an API token from your Atlassian account settings (Profile → Account Settings → Security → API tokens) and paste it here.
 - If secrets are missing, use **Setup / Connection** (interactive; not persisted to disk).
 - Never commit secrets; keep `.streamlit/secrets.toml` out of version control (it is gitignored).
 
@@ -189,6 +196,28 @@ The app has the following main views:
 ---
 
 ## For developers (contributing / adapting the app)
+
+### Workflow for updating the image
+
+Every time you update your code locally and want to share the updated version with the latest tag, you should follow these steps:
+
+1. **Rebuild the image**: Run the build command again. Docker will rebuild the image with your code changes and re-assign the latest tag to the new build.
+
+    ```bash
+    docker build -t dsanmartim/jira-issues-dashboard:latest .
+    ```
+
+2. **Push the updated image**: Upload the new version to Docker Hub.
+
+    ```bash
+    docker push dsanmartim/jira-issues-dashboard:latest
+    ```
+
+This command will upload the new layers to Docker Hub and update the latest tag in your repository to point to the new build.
+
+
+**Alternative: Automated Builds**
+If you have a Docker Pro, Team, or Business subscription, you can configure Automated Builds. This allows Docker Hub to automatically build and push a new image every time you push new code to your source provider (like GitHub or Bitbucket), eliminating the need to manually build and push from your local machine
 
 ### High-level architecture
 
