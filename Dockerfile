@@ -30,6 +30,10 @@ COPY pyproject.toml /app/pyproject.toml
 COPY jira_app /app/jira_app
 COPY run_dashboard.py /app/run_dashboard.py
 
+# Runtime writable directory (Debug page writes /app/data)
+RUN mkdir -p /app/data \
+  && chown -R appuser:appuser /app/data
+
 # Install runtime deps from pyproject.toml :contentReference[oaicite:1]{index=1}
 RUN pip install --no-cache-dir .
 

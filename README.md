@@ -19,12 +19,12 @@ Quickstart:
 
 ## Run with Docker
 
-This option lets you run the dashboard by only pulling the Docker image.
+Run the dashboard from a prebuilt Docker image — no local Python environment needed. Just pull the image and launch it from your terminal.
 
 ### 1. One-time setup
 
-Install Docker (Desktop or Engine): https://www.docker.com/get-started/
-2) Create your secrets file and put your real Jira values in it:
+Since we are going to use a prebuilt Docker image, first install Docker Desktop. See https://www.docker.com/get-started.
+Then, create a secrets file with your Jira credentials on your host machine:
 
 ```bash
 mkdir -p ~/.jira-issues-dashboard/.streamlit
@@ -46,20 +46,23 @@ Notes:
 
 ### 2. Start/stop the app (anytime)
 
-Pull (or refresh) the image when you want the latest build:
+Now that you have Docker and your credentials, pull latest build of our Docker image by running the following command in your terminal:
 
 ```bash
 docker pull dsanmartim/jira-issues-dashboard:latest
 ```
 
-Run it in the foreground:
+Finally, run it in the foreground:
+
 ```bash
 docker run --rm -p 8501:8501 \
   -v "$HOME/.jira-issues-dashboard/.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro" \
   dsanmartim/jira-issues-dashboard:latest
 ```
 
-To stop the application, just press Ctrl+C in that terminal.
+After a few seconds, the app will be running locally. See below how to access it.
+
+Note: To stop the application, just press Ctrl+C in that terminal.
 
 Optionally, you can name and run the container in the background:
 
@@ -94,11 +97,28 @@ Notes:
 
 ### 4. Updating the app (at a glance)
 
-- Pull the newest image: `docker pull dsanmartim/jira-issues-dashboard:latest`
-- If running in background: `docker stop jira-dashboard && docker rm jira-dashboard`
-- Start again (background): `docker run -d --name jira-dashboard -p 8501:8501 -v "$HOME/.jira-issues-dashboard/.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro" dsanmartim/jira-issues-dashboard:latest`
+When there is a new release, “updating the app” means pulling the latest Docker **image** (the packaged app) and restarting your **container** (the running instance). Docker won’t auto-update a container that’s already running.
 
----
+High-level steps:
+1. Pull the latest image.
+2. Stop the running container (if you started it in the background).
+3. Start a new container from the updated image.
+
+Commands:
+
+1. Pull the newest image:
+
+     `docker pull dsanmartim/jira-issues-dashboard:latest`
+
+2. If running in background:
+
+      `docker stop jira-dashboard && docker rm jira-dashboard`
+
+3. Re-start the app (background):
+
+      `docker run -d --name jira-dashboard -p 8501:8501 -v "$HOME/.jira-issues-dashboard/.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro" dsanmartim/jira-issues-dashboard:latest`
+
+
 
 ## Running locally
 
