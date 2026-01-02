@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+JIRA_DEFAULT_SERVER = "https://rubinobs.atlassian.net"
 TIMEZONE = "America/Santiago"
+
 DEFAULT_TREND_PRIORITIES = ["Blocker", "Critical", "High", "Medium", "Low"]
 
 PRIORITY_MAPPING = {
