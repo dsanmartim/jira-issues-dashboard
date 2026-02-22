@@ -15,10 +15,6 @@ from jira_app.analytics.aggregations.obs import (
     aggregate_by_obs_system,
 )
 from jira_app.analytics.metrics.activity import normalize_timestamp
-from jira_app.analytics.metrics.binning import (
-    create_histogram_chart,
-    determine_time_bin_step,
-)
 from jira_app.analytics.metrics.status_flow import build_status_duration_frame
 from jira_app.app import register_page
 from jira_app.core.config import (
@@ -29,13 +25,14 @@ from jira_app.core.config import (
     STATUS_DISPLAY_ORDER,
     TERMINAL_STATUSES,
     TIMEZONE,
+    normalize_priority_name,
 )
 from jira_app.core.service import ActivityWeights
 from jira_app.core.status import (
     normalize_workflow_status,
 )
 from jira_app.features.activity_overview.context import build_context
-from jira_app.visual.charts import blocker_critical_trend, create_bar_chart, created_trend
+from jira_app.visual.charts import create_bar_chart, created_trend, priority_updates_trend
 from jira_app.visual.leaderboard import display_leaderboard, display_ticket_list
 from jira_app.visual.progress import ProgressReporter
 from jira_app.visual.tables import prepare_ticket_table
@@ -409,8 +406,6 @@ def render():
         st.session_state.end_date_str = datetime.now(pytz.utc).date().isoformat()
     if "top_n" not in st.session_state:
         st.session_state.top_n = 15
-    if "trend_priorities" not in st.session_state:
-        st.session_state.trend_priorities = list(DEFAULT_TREND_PRIORITIES)
     if "warn_age" not in st.session_state:
         st.session_state.warn_age = DEFAULT_WARN_AGE_DAYS
     if "weight_comment" not in st.session_state:
@@ -438,16 +433,15 @@ def render():
 
         existing_df = st.session_state.get("enriched_df")
         if isinstance(existing_df, pd.DataFrame) and not existing_df.empty:
-            available_priorities = (
-                existing_df.get("priority").dropna().astype(str).sort_values().unique().tolist()
-            )
+            # Normalize priorities (e.g., "Medium (migrated)" -> "Medium")
+            raw_priorities = existing_df.get("priority").dropna().astype(str).tolist()
+            normalized = sorted({normalize_priority_name(p) for p in raw_priorities})
+            # Order by DEFAULT_TREND_PRIORITIES first, then any extras
+            available_priorities = [p for p in DEFAULT_TREND_PRIORITIES if p in normalized]
+            available_priorities += [p for p in normalized if p not in available_priorities]
         else:
             available_priorities = list(DEFAULT_TREND_PRIORITIES)
 
-        current_trends = [p for p in st.session_state.trend_priorities if p in available_priorities]
-        if not current_trends:
-            current_trends = available_priorities
-        st.session_state.trend_priorities = current_trends
         st.session_state.warn_age = st.number_input(
             "Warn Critical/Blocker age (days)",
             min_value=1,
@@ -568,13 +562,11 @@ def render():
         st.session_state.get("jira_server", ""),
     )
 
-    priorities_param = st.session_state.trend_priorities or None
     context = build_context(
         df,
         start_dt,
         end_dt,
         top_n=st.session_state.top_n,
-        priorities=priorities_param,
         aging_warn_days=st.session_state.warn_age,
     )
     st.session_state.dashboard_context = context
@@ -584,7 +576,6 @@ def render():
     obs_subsystem_table = aggregate_by_obs_subsystem(df, limit=st.session_state.top_n)
     obs_component_table = aggregate_by_obs_component(df, limit=st.session_state.top_n)
     created_chart, created_events = created_trend(df, start_dt, end_dt)
-    blocker_chart = blocker_critical_trend(df, start_dt, end_dt)
 
     st.success(f"Displaying {len(df)} issues.")
 
@@ -1475,27 +1466,14 @@ def render():
     # that bounces user back to the first tab.
     if "dashboard_segment_field" not in st.session_state:
         st.session_state.dashboard_segment_field = "priority"
-    if "trend_priorities" not in st.session_state:
-        # Defer to available_priorities if defined later; fallback to config default
-        st.session_state.trend_priorities = list(DEFAULT_TREND_PRIORITIES)
     if "summary_obs_level" not in st.session_state:
         st.session_state.summary_obs_level = "OBS System"
-    if "summary_status_filter" not in st.session_state:
-        st.session_state.summary_status_filter = None
     if "summary_status_open_only" not in st.session_state:
         st.session_state.summary_status_open_only = False
-    if "summary_status_max_days" not in st.session_state:
-        st.session_state.summary_status_max_days = 120
     if "summary_faults_obs_level" not in st.session_state:
         st.session_state.summary_faults_obs_level = "OBS System"
     if "summary_faults_top_n" not in st.session_state:
         st.session_state.summary_faults_top_n = 15
-    if "summary_assignee_priority_filter" not in st.session_state:
-        st.session_state.summary_assignee_priority_filter = None
-    if "summary_resolution_priority_filter" not in st.session_state:
-        st.session_state.summary_resolution_priority_filter = None
-    if "summary_resolution_max_days" not in st.session_state:
-        st.session_state.summary_resolution_max_days = 90
     if "ole_obs_top_n" not in st.session_state:
         st.session_state.ole_obs_top_n = 15
     # Initialize drilldown date early if events already available
@@ -1555,36 +1533,25 @@ def render():
                 if cycle_df.empty:
                     st.info("Resolution time by priority unavailable — no usable cycle-time data.")
                 else:
-                    cycle_df["priority"] = cycle_df["priority"].astype(str)
+                    # Normalize priorities (e.g., "Medium (migrated)" -> "Medium")
+                    cycle_df["priority"] = cycle_df["priority"].apply(normalize_priority_name)
                     if "available_priorities" in locals() and available_priorities:
                         priority_options = list(available_priorities)
                     else:
                         priority_options = sorted(cycle_df["priority"].unique())
                     # Ensure defaults only include priorities that exist for this window
-                    if "summary_resolution_priority_filter" not in st.session_state:
-                        st.session_state.summary_resolution_priority_filter = list(priority_options)
-                    else:
-                        current_priors = st.session_state.summary_resolution_priority_filter or []
-                        cleaned_priors = [p for p in current_priors if p in priority_options]
-                        st.session_state.summary_resolution_priority_filter = (
-                            cleaned_priors if cleaned_priors else list(priority_options)
-                        )
+                    # Order priorities according to DEFAULT_TREND_PRIORITIES where possible
+                    ordered_priorities = [p for p in DEFAULT_TREND_PRIORITIES if p in priority_options]
+                    ordered_priorities += [p for p in priority_options if p not in ordered_priorities]
+                    priority_options = ordered_priorities
+
+                    # Simple multiselect - default to all priorities
                     selected_priorities = st.multiselect(
                         "Select priorities",
                         options=priority_options,
-                        default=st.session_state.summary_resolution_priority_filter or [],
-                        key="summary_resolution_priority_filter",
+                        default=priority_options,
                     )
-                    if "summary_resolution_max_days" not in st.session_state:
-                        st.session_state.summary_resolution_max_days = 90
-                    max_days = st.slider(
-                        "Maximum cycle time (days)",
-                        min_value=1,
-                        max_value=365,
-                        value=int(st.session_state.summary_resolution_max_days),
-                        key="summary_resolution_max_days",
-                    )
-                    filtered_cycle = cycle_df[cycle_df["cycle_time_days"] <= max_days]
+                    filtered_cycle = cycle_df.copy()
                     if selected_priorities:
                         filtered_cycle = filtered_cycle[filtered_cycle["priority"].isin(selected_priorities)]
                     if filtered_cycle.empty:
@@ -1627,39 +1594,57 @@ def render():
                         stats["Tickets"] = stats["Tickets"].astype("Int64")
                         stats["Mean"] = stats["Mean"].round(1)
                         stats["P90"] = stats["P90"].round(1)
-                        st.dataframe(
-                            stats,
-                            hide_index=True,
-                            width="stretch",
-                            column_config={
-                                "Priority": st.column_config.Column(
-                                    "Priority",
-                                    help="Jira priority for the resolved tickets in this table.",
-                                ),
-                                "Tickets": st.column_config.NumberColumn(
-                                    "Tickets",
-                                    help="Number of resolved tickets for the priority bucket.",
-                                    format="%d",
-                                ),
-                                "Mean": st.column_config.NumberColumn(
-                                    "Mean (days)",
-                                    help="Average number of days from creation to resolution.",
-                                    format="%.1f",
-                                ),
-                                "P90": st.column_config.NumberColumn(
-                                    "90th percentile (days)",
-                                    help="90% of tickets resolved within this many days.",
-                                    format="%.1f",
-                                ),
-                            },
-                        )
-                        st.caption(
-                            "Cycle-time summary (days) per priority using the dashboard's shared "
-                            "priority list."
-                        )
+
+                        # Bar chart for cycle time by priority (exclude "All Selected" row)
+                        chart_data = stats[stats["Priority"] != "All Selected"].copy()
+                        if not chart_data.empty:
+                            # Melt data for grouped bar chart
+                            chart_melted = chart_data.melt(
+                                id_vars=["Priority"],
+                                value_vars=["Mean", "P90"],
+                                var_name="Metric",
+                                value_name="Days",
+                            )
+                            chart_melted = chart_melted.dropna(subset=["Days"])
+                            if not chart_melted.empty:
+                                # Define priority order for sorting
+                                available_priorities = chart_data["Priority"].values
+                                priority_order = [p for p in priority_options if p in available_priorities]
+                                cycle_chart = (
+                                    alt.Chart(chart_melted)
+                                    .mark_bar()
+                                    .encode(
+                                        x=alt.X(
+                                            "Priority:N",
+                                            sort=priority_order,
+                                            title="Priority",
+                                        ),
+                                        y=alt.Y("Days:Q", title="Days"),
+                                        color=alt.Color(
+                                            "Metric:N",
+                                            scale=alt.Scale(
+                                                domain=["Mean", "P90"],
+                                                range=["#4472C4", "#ED7D31"],
+                                            ),
+                                            legend=alt.Legend(title="Metric"),
+                                        ),
+                                        xOffset="Metric:N",
+                                        tooltip=[
+                                            alt.Tooltip("Priority:N", title="Priority"),
+                                            alt.Tooltip("Metric:N", title="Metric"),
+                                            alt.Tooltip("Days:Q", title="Days", format=".1f"),
+                                        ],
+                                    )
+                                    .properties(height=300, title="Resolution Cycle Time by Priority")
+                                )
+                                st.altair_chart(cycle_chart, width="stretch")
+                                st.caption(
+                                    "Mean and 90th percentile cycle times (days) per priority. "
+                                    "Tickets resolved within the selected date range."
+                                )
 
         st.markdown("---")
-        st.subheader("Time in Status Buckets")
+        st.subheader("Average Time in Status")
         status_duration_df = build_status_duration_frame(df, tz, now_ts)
         if status_duration_df.empty:
             st.info("Status transition history not available to calculate dwell times.")
@@ -1674,20 +1659,11 @@ def render():
             if not all_statuses:
                 st.info("No eligible statuses available for dwell-time analysis.")
             else:
-                # Keep default selections valid for the current option set
-                current_filter = st.session_state.get("summary_status_filter")
-                if not current_filter:
-                    st.session_state.summary_status_filter = list(all_statuses)
-                else:
-                    cleaned_filter = [status for status in current_filter if status in all_statuses]
-                    st.session_state.summary_status_filter = (
-                        cleaned_filter if cleaned_filter else list(all_statuses)
-                    )
+                # Simple multiselect - default to all statuses
                 selected_statuses = st.multiselect(
                     "Select statuses",
                     options=all_statuses,
-                    default=st.session_state.summary_status_filter or [],
-                    key="summary_status_filter",
+                    default=all_statuses,
                 )
                 open_only = st.checkbox(
                     "Focus on currently open tickets only",
@@ -1699,62 +1675,56 @@ def render():
                 if open_only:
                     filtered = filtered[filtered["is_open"]]
 
-                max_status_days = st.slider(
-                    "Maximum days in status",
-                    min_value=1,
-                    max_value=365,
-                    value=int(st.session_state.summary_status_max_days),
-                    key="summary_status_max_days",
-                )
-                filtered = filtered[filtered["duration_days"] <= max_status_days]
-
                 if filtered.empty:
                     st.info("No status dwell-time data for the selected filters.")
                 else:
-                    bin_step = determine_time_bin_step(filtered["duration_days"])
-                    status_chart = create_histogram_chart(
-                        filtered,
-                        "duration_days",
-                        title="Days Spent in Status",
-                        color_col="status",
-                        bin_step=bin_step,
+                    summary_table = (
+                        filtered.groupby("status")["duration_days"]
+                        .agg(Tickets="count", Mean="mean")
+                        .rename_axis("Status")
+                        .reset_index()
                     )
-                    if status_chart is not None:
-                        st.altair_chart(status_chart, width="stretch")
+                    summary_table["Tickets"] = summary_table["Tickets"].fillna(0).astype("Int64")
+                    summary_table["Mean"] = summary_table["Mean"].round(1)
 
-                summary_table = (
-                    filtered.groupby("status")["duration_days"]
-                    .agg(Tickets="count", Mean="mean")
-                    .rename_axis("Status")
-                    .reset_index()
-                )
-                summary_table["Tickets"] = summary_table["Tickets"].fillna(0).astype("Int64")
-                summary_table["Mean"] = summary_table["Mean"].round(1)
-                st.dataframe(
-                    summary_table,
-                    hide_index=True,
-                    width="stretch",
-                    column_config={
-                        "Status": st.column_config.Column(
-                            "Status",
-                            help="Workflow status name (Cancelled and Duplicate are excluded).",
-                        ),
-                        "Tickets": st.column_config.NumberColumn(
-                            "Tickets",
-                            help="Count of status-duration rows included for the status.",
-                            format="%d",
-                        ),
-                        "Mean": st.column_config.NumberColumn(
-                            "Mean days in status",
-                            help="Average number of days issues spent in the status under current filters.",
-                            format="%.1f",
-                        ),
-                    },
-                )
-                st.caption(
-                    "Table lists tracked in-flight statuses (excluding terminal statuses) with ticket "
-                    "counts and mean days under the current filters."
-                )
+                    # Horizontal bar chart for mean time in status
+                    if not summary_table.empty:
+                        chart_data = summary_table.dropna(subset=["Mean"]).copy()
+                        if not chart_data.empty:
+                            # Sort by mean descending for better visualization
+                            chart_data = chart_data.sort_values("Mean", ascending=True)
+                            status_order = chart_data["Status"].tolist()
+                            status_bar_chart = (
+                                alt.Chart(chart_data)
+                                .mark_bar(color="#4472C4")
+                                .encode(
+                                    y=alt.Y(
+                                        "Status:N",
+                                        sort=status_order,
+                                        title="Status",
+                                        axis=alt.Axis(
+                                            labelLimit=300,
+                                            labelOverlap="greedy",
+                                            labelPadding=5,
+                                        ),
+                                    ),
+                                    x=alt.X("Mean:Q", title="Mean Days in Status"),
+                                    tooltip=[
+                                        alt.Tooltip("Status:N", title="Status"),
+                                        alt.Tooltip("Tickets:Q", title="Tickets", format=",d"),
+                                        alt.Tooltip("Mean:Q", title="Mean Days", format=".1f"),
+                                    ],
+                                )
+                                .properties(
+                                    height=max(250, len(chart_data) * 40),
+                                    title="Average Time in Status",
+                                )
+                            )
+                            st.altair_chart(status_bar_chart, width="stretch")
+                            st.caption(
+                                "Mean days spent in each workflow status. "
+                                "Terminal statuses (Done, Cancelled, etc.) are excluded."
+                            )
 
         # Assignee Workload (Open Tickets) moved to Assignee | Reporter Insights page
 
@@ -2068,41 +2038,60 @@ def render():
                 )
 
     with trends_tab:
-        st.caption(
-            "Time-series for created issues and blocker/critical updates."
-            " The priority filter affects only the blocker/critical chart."
-        )
-        st.subheader("Trend Filters")
-        if "trend_priorities" not in st.session_state:
-            st.session_state.trend_priorities = available_priorities
-        else:
-            filtered_priorities = [p for p in st.session_state.trend_priorities if p in available_priorities]
-            st.session_state.trend_priorities = (
-                filtered_priorities if filtered_priorities else available_priorities
-            )
-        st.multiselect(
-            "Priorities included",
-            options=available_priorities,
-            default=st.session_state.trend_priorities,
-            key="trend_priorities",
-            help=(
-                "Affects priority-filtered trend charts (e.g., Blocker/Critical updates). "
-                "The 'Created Issues Over Time' chart shows all created tickets."
-            ),
-        )
+        st.caption("Time-series charts for issue creation and priority-based activity trends.")
 
         st.subheader("Created Issues Over Time")
         if created_chart:
             st.altair_chart(created_chart, width="stretch")
-            st.caption("Unfiltered: shows all issues created in the selected date window.")
+            st.caption("Shows all issues created in the selected date window, regardless of priority.")
         else:
             st.info("No created issues in the selected period.")
 
-        st.subheader("Blocker/Critical Updates")
-        if blocker_chart:
-            st.altair_chart(blocker_chart, width="stretch")
+        st.markdown("---")
+        st.subheader("Priority Updates Over Time")
+
+        # Determine smart defaults for priority filter:
+        # 1. Blocker + Critical (or one if only one exists)
+        # 2. Fallback to Urgent if neither exists
+        # 3. Otherwise pick first available priority from data
+        def _get_default_trend_priorities(available: list[str]) -> list[str]:
+            defaults = []
+            for p in ["Blocker", "Critical"]:
+                if p in available:
+                    defaults.append(p)
+            if defaults:
+                return defaults
+            if "Urgent" in available:
+                return ["Urgent"]
+            # Fallback: return first available or empty
+            return available[:1] if available else []
+
+        # Compute smart default: Blocker/Critical, fallback to Urgent, then first available
+        default_trend_prios = _get_default_trend_priorities(available_priorities)
+
+        # Simple multiselect with smart default
+        selected_trend_priorities = st.multiselect(
+            "Filter by priorities",
+            options=available_priorities,
+            default=default_trend_prios,
+            help="Select which priorities to include in the updates chart below.",
+        )
+
+        # Generate chart with selected priorities
+        if selected_trend_priorities:
+            priority_chart = priority_updates_trend(
+                df, start_dt, end_dt, priorities=selected_trend_priorities
+            )
+            if priority_chart:
+                st.altair_chart(priority_chart, width="stretch")
+                st.caption(
+                    f"Shows updates to issues with selected priorities "
+                    f"({', '.join(selected_trend_priorities)}) in the date window."
+                )
+            else:
+                st.info("No updates for the selected priorities in this period.")
         else:
-            st.info("No blocker/critical activity in the selected period.")
+            st.info("Select at least one priority to see the updates chart.")
 
         if created_events is not None and not created_events.empty:
             st.subheader("Drilldown: Tickets Created On...")

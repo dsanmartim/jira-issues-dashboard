@@ -133,19 +133,45 @@ def created_trend(df: pd.DataFrame, start, end, priorities=None):
     return chart, tmp
 
 
-def blocker_critical_trend(df: pd.DataFrame, start, end):
+def priority_updates_trend(df: pd.DataFrame, start, end, priorities: list[str] | None = None):
+    """Create a bar chart showing updates for selected priorities over time.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing issue data.
+    start, end : datetime-like
+        Date range for filtering.
+    priorities : list[str] | None
+        List of priority names to include. If None, defaults to Blocker/Critical.
+
+    Returns
+    -------
+    alt.Chart or None
+        Altair chart object, or None if no data matches.
+    """
     if df.empty:
         return None
     tz = pytz.timezone(TIMEZONE)
     tmp = df.copy()
-    tmp = tmp[tmp["priority"].astype(str).str.startswith(("Blocker", "Critical"))]
+
+    # Filter by selected priorities
+    if priorities:
+        tmp = tmp[tmp["priority"].astype(str).isin(priorities)]
+    else:
+        # Legacy fallback: Blocker/Critical
+        tmp = tmp[tmp["priority"].astype(str).str.startswith(("Blocker", "Critical"))]
+
     tmp["updated_dt"] = pd.to_datetime(tmp["updated"], utc=True, errors="coerce").dt.tz_convert(tz)
     tmp = tmp[(tmp["updated_dt"] >= start) & (tmp["updated_dt"] <= end)]
     if tmp.empty:
         return None
     tmp["date"] = tmp["updated_dt"].dt.date
+    tmp["priority_str"] = tmp["priority"].astype(str)
+
+    # Group by date and priority for color-coded stacked bars
     agg = (
-        tmp.groupby("date")
+        tmp.groupby(["date", "priority_str"])
         .apply(
             lambda g: pd.Series({"count": int(len(g)), "tickets": _format_ticket_list(g)}),
             include_groups=False,
@@ -154,14 +180,52 @@ def blocker_critical_trend(df: pd.DataFrame, start, end):
     )
     agg["date"] = pd.to_datetime(agg["date"])
     agg["tickets"] = agg["tickets"].fillna("").astype(str)
+
+    # Define priority color mapping - distinct color for each priority
+    priority_colors = {
+        "Blocker": "#d62728",  # Red
+        "Critical": "#c0392b",  # Dark Red
+        "Urgent": "#ff7f0e",  # Orange
+        "High": "#f39c12",  # Amber
+        "Medium": "#f1c40f",  # Yellow
+        "Low": "#27ae60",  # Green
+        "Undefined": "#95a5a6",  # Gray
+    }
+    # Fallback colors for unknown priorities
+    fallback_colors = ["#3498db", "#9b59b6", "#1abc9c", "#e74c3c", "#34495e"]
+
+    # Build color scale domain and range
+    unique_priorities = agg["priority_str"].unique().tolist()
+    color_domain = unique_priorities
+    fallback_idx = 0
+    color_range = []
+    for p in unique_priorities:
+        if p in priority_colors:
+            color_range.append(priority_colors[p])
+        else:
+            color_range.append(fallback_colors[fallback_idx % len(fallback_colors)])
+            fallback_idx += 1
+
+    # Dynamic title based on selected priorities
+    if priorities:
+        title_suffix = "/".join(priorities) if len(priorities) <= 3 else f"{len(priorities)} priorities"
+    else:
+        title_suffix = "Blocker/Critical"
+
     chart = (
         alt.Chart(agg)
-        .mark_bar(color="#d62728")
+        .mark_bar()
         .encode(
             x=alt.X("date:T", title="Date"),
-            y=alt.Y("count:Q", title="Blocker/Critical Updates"),
+            y=alt.Y("count:Q", title=f"{title_suffix} Updates", stack=True),
+            color=alt.Color(
+                "priority_str:N",
+                scale=alt.Scale(domain=color_domain, range=color_range),
+                legend=alt.Legend(title="Priority"),
+            ),
             tooltip=[
                 alt.Tooltip("date:T", title="Date"),
+                alt.Tooltip("priority_str:N", title="Priority"),
                 alt.Tooltip("count:Q", title="Updates"),
                 alt.Tooltip("tickets:N", title="Tickets"),
             ],
@@ -169,3 +233,7 @@ def blocker_critical_trend(df: pd.DataFrame, start, end):
         .properties(height=220)
     )
     return chart
+
+
+# Keep old name for backwards compatibility
+blocker_critical_trend = priority_updates_trend

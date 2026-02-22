@@ -107,6 +107,66 @@ PRIORITY_MAPPING = {
     "Undefined": 0,
 }
 
+# Priority aliases for normalization (lowercase keys)
+PRIORITY_ALIASES: dict[str, str] = {
+    "blocker": "Blocker",
+    "critical": "Critical",
+    "urgent": "Urgent",
+    "high": "High",
+    "medium": "Medium",
+    "low": "Low",
+    "undefined": "Undefined",
+    "none": "Undefined",
+    # Numeric priority IDs (legacy Jira values)
+    "5": "Blocker",
+    "4": "Critical",
+    "3": "High",
+    "2": "Medium",
+    "1": "Low",
+    "0": "Undefined",
+}
+
+
+def normalize_priority_name(priority: str | None) -> str:
+    """Normalize a priority name to its canonical form.
+
+    Handles variations like:
+    - "(migrated)" suffixes: "Medium (migrated)" -> "Medium"
+    - Case variations: "HIGH" -> "High"
+    - Whitespace: "  Medium  " -> "Medium"
+
+    Parameters
+    ----------
+    priority : str or None
+        Raw priority string from Jira.
+
+    Returns
+    -------
+    str
+        Canonical priority name, or original string if no mapping found.
+    """
+    if priority is None:
+        return "Undefined"
+
+    # Clean up whitespace
+    cleaned = str(priority).strip()
+    if not cleaned:
+        return "Undefined"
+
+    # Remove "(migrated)" suffix (case-insensitive)
+    import re
+
+    cleaned = re.sub(r"\s*\(migrated\)\s*$", "", cleaned, flags=re.IGNORECASE).strip()
+
+    # Try to match against known aliases (case-insensitive)
+    lookup_key = cleaned.lower()
+    if lookup_key in PRIORITY_ALIASES:
+        return PRIORITY_ALIASES[lookup_key]
+
+    # Return cleaned version with title case if no alias match
+    return cleaned
+
+
 # =============================================================================
 # Jira Custom Field IDs
 # =============================================================================
