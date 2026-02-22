@@ -16,9 +16,16 @@ from jira_app.analytics.aggregations.obs import (
     aggregate_by_obs_system,
 )
 from jira_app.analytics.metrics.activity import normalize_timestamp
-from jira_app.analytics.segments.filters import OLE_API_DISPLAY_NAME
 from jira_app.app import register_page
-from jira_app.core.config import TIMEZONE
+from jira_app.core.config import (
+    API_COMMENT_AUTHORS,
+    DEFAULT_DATE_RANGE_DAYS,
+    DEFAULT_WARN_AGE_DAYS,
+    STATUS_ALIASES,
+    STATUS_DISPLAY_ORDER,
+    TERMINAL_STATUSES,
+    TIMEZONE,
+)
 from jira_app.core.service import ActivityWeights
 from jira_app.features.activity_overview.context import build_context
 from jira_app.visual.charts import blocker_critical_trend, created_trend
@@ -27,54 +34,28 @@ from jira_app.visual.progress import ProgressReporter
 from jira_app.visual.tables import prepare_ticket_table
 from jira_app.visual.wordcloud import WORDCLOUD_AVAILABLE, wordcloud_png
 
-DONE_STATUSES = {"done", "resolved", "closed", "cancelled", "completed", "duplicate", "duplicated"}
+# Derive done statuses from terminal statuses (lowercase for matching)
+DONE_STATUSES = {s.lower() for s in TERMINAL_STATUSES} | {"resolved", "closed", "completed", "duplicated"}
 CRITICAL_PREFIXES = ("Blocker", "Critical")
-
-# Canonical OBS workflow statuses and display order
-ALLOWED_WORKFLOW_STATUSES: list[str] = [
-    "Reported",
-    "To Do",
-    "In Progress",
-    "Testing",
-    "Tracking",
-    "Transferred",
-    "Duplicate",
-    "Cancelled",
-    "Done",
-]
-
-# Terminal statuses in the OBS workflow
-TERMINAL_STATUSES: set[str] = {"Done", "Cancelled", "Duplicate", "Transferred"}
 
 
 def _normalize_workflow_status(value: str | None) -> str:
-    """Map raw Jira status to the canonical OBS workflow status names.
+    """Map raw Jira status to the canonical workflow status names.
 
     Returns "Unknown" for any unmapped/empty value so we can surface new statuses.
+    Uses STATUS_ALIASES from config for the mapping.
     """
     if not value:
         return "Unknown"
     text = str(value).strip().lower()
-    mapping = {
-        "reported": "Reported",
-        "to do": "To Do",
-        "todo": "To Do",
-        "in progress": "In Progress",
-        "testing": "Testing",
-        "tracking": "Tracking",
-        "transferred": "Transferred",
-        "duplicate": "Duplicate",
-        "duplicated": "Duplicate",
-        "cancelled": "Cancelled",
-        "canceled": "Cancelled",
-        # Treat terminal synonyms as Done
-        "done": "Done",
-        "resolved": "Done",
-        "closed": "Done",
-        "complete": "Done",
-        "completed": "Done",
-    }
-    return mapping.get(text, "Unknown")
+    # Check config aliases first
+    if text in STATUS_ALIASES:
+        return STATUS_ALIASES[text]
+    # Check if it matches a display status (case-insensitive)
+    for status in STATUS_DISPLAY_ORDER:
+        if text == status.lower():
+            return status
+    return "Unknown"
 
 
 def create_bar_chart(data: pd.DataFrame, x_col: str, y_col: str, title: str | None):
@@ -250,7 +231,7 @@ def _build_ole_obs_heatmaps(
         )
         for _, label in levels
     }
-    allowed_authors = {OLE_API_DISPLAY_NAME, "love-api"}
+    allowed_authors = API_COMMENT_AUTHORS
 
     def _escape_html(text: str) -> str:
         return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -933,10 +914,15 @@ def render():
         return
 
     issue_service = st.session_state.issue_service
-    project_key = "OBS"
+    # Import project key from config to avoid hard-coding
+    from jira_app.core.config import DEFAULT_PROJECT_KEY
+
+    project_key = DEFAULT_PROJECT_KEY
 
     if "start_date_str" not in st.session_state:
-        st.session_state.start_date_str = (datetime.now(pytz.utc) - timedelta(days=30)).date().isoformat()
+        st.session_state.start_date_str = (
+            (datetime.now(pytz.utc) - timedelta(days=DEFAULT_DATE_RANGE_DAYS)).date().isoformat()
+        )
     if "end_date_str" not in st.session_state:
         st.session_state.end_date_str = datetime.now(pytz.utc).date().isoformat()
     if "top_n" not in st.session_state:
@@ -944,7 +930,7 @@ def render():
     if "trend_priorities" not in st.session_state:
         st.session_state.trend_priorities = ["Blocker", "Critical", "High", "Medium", "Low"]
     if "warn_age" not in st.session_state:
-        st.session_state.warn_age = 14
+        st.session_state.warn_age = DEFAULT_WARN_AGE_DAYS
     if "weight_comment" not in st.session_state:
         st.session_state.weight_comment = 2.0
     if "weight_status" not in st.session_state:
@@ -1498,7 +1484,7 @@ def render():
         status_series = df["status"].fillna("").astype(str)
         normalized = status_series.apply(_normalize_workflow_status)
         counts = normalized.value_counts().rename_axis("status").reset_index(name="count")
-        order = [s for s in ALLOWED_WORKFLOW_STATUSES if s in counts["status"].values]
+        order = [s for s in STATUS_DISPLAY_ORDER if s in counts["status"].values]
         if (counts["status"] == "Unknown").any():
             order = order + ["Unknown"]
         counts = counts.set_index("status").reindex(order).fillna({"count": 0}).reset_index()
@@ -1775,7 +1761,7 @@ def render():
             filtered_base = filtered_base[filtered_base["key"].astype(str).isin(selected_ticket_keys)]
 
         present = list(filtered_base["__norm_status"].unique()) if not filtered_base.empty else []
-        tab_order = [s for s in ALLOWED_WORKFLOW_STATUSES if s in present]
+        tab_order = [s for s in STATUS_DISPLAY_ORDER if s in present]
         if "Unknown" in present and "Unknown" not in tab_order:
             tab_order.append("Unknown")
         # Build final tabs list with an 'All' tab first when there is any data

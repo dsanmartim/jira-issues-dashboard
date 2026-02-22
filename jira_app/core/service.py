@@ -11,11 +11,15 @@ from typing import Any
 import pandas as pd
 import pytz
 
-from jira_app.analytics.metrics.activity import add_weighted_activity, normalize_timestamp
+from jira_app.analytics.metrics.activity import (
+    add_weighted_activity,
+    count_comments_in_range,
+    normalize_timestamp,
+)
 from jira_app.analytics.metrics.aging import add_aging_metrics
-from jira_app.analytics.segments.filters import OLE_API_DISPLAY_NAME
 
 from .config import (
+    API_COMMENT_AUTHORS,
     COMMENT_HYDRATION_MAX_WORKERS,
     COMMENT_HYDRATION_MIN_PARALLEL,
     FULL_COMMENT_HYDRATION,
@@ -221,59 +225,30 @@ class IssueService:
         # Ensure commonly used columns are present for all downstream views.
         out = active.copy()
 
-        # 1) Comments metric unified
+        # 1) Comments metric unified - use pre-computed or shared utility
         if "filtered_comments_count" not in out.columns:
             if "comments_in_range" in out.columns:
                 out["filtered_comments_count"] = out["comments_in_range"]
+            elif "comments" in out.columns:
+                # Fallback using shared utility function
+                out["filtered_comments_count"] = out["comments"].apply(
+                    lambda lst: count_comments_in_range(lst, start_tz, end_tz, self._tz)
+                )
             else:
-                # Fallback: count comments within range
-                def _count_comments(lst):
-                    if not isinstance(lst, list):
-                        return 0
-                    total = 0
-                    for c in lst:
-                        if not isinstance(c, dict):
-                            continue
-                        if normalize_timestamp(c.get("created"), self._tz) is None:
-                            continue
-                        ts = normalize_timestamp(c.get("created"), self._tz)
-                        if ts is None or ts < start_tz or ts > end_tz:
-                            continue
-                        total += 1
-                    return total
+                out["filtered_comments_count"] = 0
 
-                if "comments" in out.columns:
-                    out["filtered_comments_count"] = out["comments"].apply(_count_comments)
-                else:
-                    out["filtered_comments_count"] = 0
-
-        # 2) History entries unified
+        # 2) History entries unified - use pre-computed total_activity_in_range or components
         if "filtered_histories_count" not in out.columns:
             if "status_changes" in out.columns and "other_changes" in out.columns:
                 out["filtered_histories_count"] = out["status_changes"] + out["other_changes"]
+            elif "total_activity_in_range" in out.columns and "comments_in_range" in out.columns:
+                # Derive from total minus comments
+                out["filtered_histories_count"] = out["total_activity_in_range"] - out["comments_in_range"]
             else:
+                out["filtered_histories_count"] = 0
 
-                def _count_histories(lst):
-                    if not isinstance(lst, list):
-                        return 0
-                    total = 0
-                    for h in lst:
-                        if not isinstance(h, dict):
-                            continue
-                        ts = normalize_timestamp(h.get("created"), self._tz)
-                        if ts is None or ts < start_tz or ts > end_tz:
-                            continue
-                        total += 1
-                    return total
-
-                if "histories" in out.columns:
-                    out["filtered_histories_count"] = out["histories"].apply(_count_histories)
-                else:
-                    out["filtered_histories_count"] = 0
-
-        # 3) OLE Comments unified (Rubin Jira API Access / love-api)
+        # 3) API/System Comments unified (uses API_COMMENT_AUTHORS from config)
         if "ole_comments_count" not in out.columns or "ole_last_comment" not in out.columns:
-            allowed_authors = {OLE_API_DISPLAY_NAME, "love-api"}
 
             def _extract_ole_stats(lst):
                 cnt = 0
@@ -287,7 +262,7 @@ class IssueService:
                             name = author.get("displayName") or author.get("name") or ""
                         else:
                             name = str(author or cm.get("author") or "")
-                        if name not in allowed_authors:
+                        if name not in API_COMMENT_AUTHORS:
                             continue
                         ts = normalize_timestamp(cm.get("created"), self._tz)
                         if ts is None or ts < start_tz or ts > end_tz:

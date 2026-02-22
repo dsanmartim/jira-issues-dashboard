@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import tomllib
 
 import streamlit as st
+from jira import JIRAError
 from streamlit.errors import StreamlitSecretNotFoundError
 
 from jira_app.app import register_page
@@ -12,10 +14,28 @@ from jira_app.core.config import JIRA_DEFAULT_SERVER
 from jira_app.core.jira_client import JiraAPI
 from jira_app.core.service import IssueService
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_TTL = 300
 
 
 def _extract_secrets(source: object | None) -> dict[str, str]:
+    """Extract Jira credentials from a secrets source (dict-like object).
+
+    Canonical format (recommended):
+        JIRA_SERVER = "https://your-instance.atlassian.net"
+        JIRA_EMAIL = "user@example.com"
+        JIRA_API_TOKEN = "your-api-token"
+        JIRA_CACHE_TTL = 300  # optional, defaults to 300 seconds
+
+    Alternative key names accepted for flexibility:
+        - Server: JIRA_SERVER, jira_server
+        - Email: JIRA_EMAIL, jira_email
+        - Token: JIRA_API_TOKEN, JIRA_TOKEN, jira_api_token, jira_token
+        - TTL: JIRA_CACHE_TTL, jira_cache_ttl
+
+    Secrets can be provided at the top level or nested under a [jira] section.
+    """
     if not source:
         return {}
     # Accept any mapping/dict-like object
@@ -93,7 +113,12 @@ def setup_page():
                 ready = True
                 st.success("Connection initialized from Streamlit secrets.")
                 _mark_sidebar_connected()
-            except Exception:  # pragma: no cover - avoid leaking secrets in errors
+            except JIRAError as exc:
+                error_detail = exc.text if hasattr(exc, "text") else str(exc)
+                logger.warning("Jira connection failed from secrets: %s", error_detail)
+                st.error("Failed to initialize from secrets. Please provide credentials below.")
+            except (ValueError, TypeError) as exc:
+                logger.warning("Invalid credentials in secrets: %s", type(exc).__name__)
                 st.error("Failed to initialize from secrets. Please provide credentials below.")
 
     if ready:
@@ -127,7 +152,11 @@ def setup_page():
                         st.success("Connection initialized from uploaded secrets (session only).")
                         _mark_sidebar_connected()
                         st.rerun()
-            except Exception:  # pragma: no cover - avoid exposing details
+            except tomllib.TOMLDecodeError as exc:
+                logger.warning("TOML parsing failed: %s", exc)
+                st.error("Could not read the uploaded secrets file. Check formatting and try again.")
+            except (UnicodeDecodeError, ValueError) as exc:
+                logger.warning("Secrets file decode error: %s", type(exc).__name__)
                 st.error("Could not read the uploaded secrets file. Check formatting and try again.")
 
     # Manual entry path
@@ -161,7 +190,11 @@ def setup_page():
                     st.success("Connection initialized.")
                     _mark_sidebar_connected()
                     st.rerun()
-                except Exception:  # pragma: no cover
+                except JIRAError as exc:
+                    logger.warning("Jira connection failed: %s", exc.text if hasattr(exc, "text") else exc)
+                    st.error("Failed to initialize Jira client. Please verify the credentials.")
+                except (ValueError, TypeError) as exc:
+                    logger.warning("Invalid credential values: %s", type(exc).__name__)
                     st.error("Failed to initialize Jira client. Please verify the credentials.")
 
     # Reset connection

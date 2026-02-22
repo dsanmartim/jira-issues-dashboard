@@ -4,15 +4,28 @@ from __future__ import annotations
 
 import pandas as pd
 
+from jira_app.analytics.metrics.derived import add_derived_metrics
+
 
 def aggregate_by_assignee(df: pd.DataFrame, limit: int = 200) -> pd.DataFrame:
+    """Aggregate issues by assignee.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame with issue data.
+    limit : int
+        Maximum number of rows to return (default 200).
+
+    Returns
+    -------
+    pd.DataFrame
+        Aggregated DataFrame with columns: assignee, issues, time_lost_sum, activity_sum.
+    """
     if df.empty:
         return df
-    out = df.copy()
-    out["time_lost_value"] = pd.to_numeric(out.get("time_lost"), errors="coerce").fillna(0)
-    out["total_activity_in_range"] = (
-        out.get("comments_in_range", 0) + out.get("status_changes", 0) + out.get("other_changes", 0)
-    )
+
+    out = add_derived_metrics(df)
     agg = (
         out.groupby("assignee", dropna=False)
         .agg(

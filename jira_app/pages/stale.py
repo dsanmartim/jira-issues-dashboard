@@ -6,36 +6,41 @@ based on days since last update.
 
 from __future__ import annotations
 
-import pandas as pd
-import pytz
-import streamlit as st
+import logging
 
+import pandas as pd
+import streamlit as st
+from jira import JIRAError
+
+from jira_app.analytics.metrics.aging import add_aging_metrics
 from jira_app.app import register_page
+from jira_app.core.config import DEFAULT_PROJECT_KEY, DEFAULT_STALE_DAYS
 from jira_app.core.service import IssueService
 from jira_app.core.stale import compute_stale
 from jira_app.visual.column_metadata import apply_column_metadata
 from jira_app.visual.progress import ProgressReporter
 from jira_app.visual.tables import prepare_ticket_table
 
+logger = logging.getLogger(__name__)
+
 
 @register_page("Stale Tickets")
 def stale_page():
     st.title("Stale Tickets")
-    st.caption("Identify OBS tickets that haven't been updated recently.")
+    st.caption(f"Identify {DEFAULT_PROJECT_KEY} tickets that haven't been updated recently.")
     service: IssueService | None = st.session_state.get("issue_service")
     if service is None:
         st.warning("Initialize connection on Setup page first.")
         return
-    project = "OBS"
+    project = DEFAULT_PROJECT_KEY
     st.session_state["project_key"] = project
     stale_days = st.number_input(
         "Mark stale if no update in N days",
         min_value=1,
-        value=30,
+        value=DEFAULT_STALE_DAYS,
         step=1,
     )
     refresh = st.button("Fetch Stale", type="primary")
-    tz = pytz.timezone("America/Santiago")
 
     if refresh:
         reporter = ProgressReporter(f"Fetching open issues for {project}")
@@ -45,20 +50,21 @@ def stale_page():
                 reporter.complete("No open issues found.")
                 st.info("No open issues found.")
                 return
+            reporter.update("Computing aging metrics")
+            # Use shared aging metrics (consistent float precision with enrichment pipeline)
+            df = add_aging_metrics(base)
             reporter.update("Evaluating tickets for staleness")
-            # Derive days_since_update / days_open if not present
-            df = base.copy()
-            if "updated" in df.columns:
-                df["updated_dt"] = pd.to_datetime(df["updated"], errors="coerce", utc=True).dt.tz_convert(tz)
-                df["days_since_update"] = (pd.Timestamp.now(tz) - df["updated_dt"]).dt.days
-            if "created" in df.columns:
-                df["created_dt"] = pd.to_datetime(df["created"], errors="coerce", utc=True).dt.tz_convert(tz)
-                df["days_open"] = (pd.Timestamp.now(tz) - df["created_dt"]).dt.days
             stale_df = compute_stale(df, stale_days)
             st.session_state["stale_df"] = stale_df
             reporter.complete(f"Computed stale metrics for {len(stale_df)} ticket(s).")
-        except Exception as exc:  # pragma: no cover
-            reporter.error(f"Failed to fetch stale tickets: {exc}")
+        except JIRAError as exc:
+            error_msg = exc.text if hasattr(exc, "text") else str(exc)
+            logger.error("Jira API error fetching stale tickets: %s", error_msg)
+            reporter.error(f"Failed to fetch stale tickets: {error_msg}")
+            raise
+        except (ValueError, KeyError) as exc:
+            logger.error("Data processing error in stale tickets: %s", exc)
+            reporter.error(f"Failed to process stale tickets: {exc}")
             raise
 
     stale_df = st.session_state.get("stale_df", pd.DataFrame())

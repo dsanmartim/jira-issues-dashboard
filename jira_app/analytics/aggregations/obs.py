@@ -2,29 +2,44 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import pandas as pd
 
+from jira_app.analytics.metrics.derived import add_derived_metrics
 
-def _base(df: pd.DataFrame):
-    out = df.copy()
-    # Ensure we always operate on a Series;
-    # out.get("time_lost") would return scalar 0 if missing.
-    if "time_lost" in out.columns:
-        out["time_lost_value"] = pd.to_numeric(out["time_lost"], errors="coerce").fillna(0)
-    else:
-        out["time_lost_value"] = 0
-    out["total_activity_in_range"] = (
-        out.get("comments_in_range", 0) + out.get("status_changes", 0) + out.get("other_changes", 0)
-    )
-    return out
+# Type alias for valid OBS grouping columns
+ObsGroupColumn = Literal["obs_system", "obs_subsystem", "obs_component"]
 
 
-def aggregate_by_obs_system(df: pd.DataFrame, limit: int = 200) -> pd.DataFrame:
+def aggregate_by_obs_hierarchy(
+    df: pd.DataFrame,
+    group_by: ObsGroupColumn,
+    limit: int = 200,
+) -> pd.DataFrame:
+    """Aggregate issues by an OBS hierarchy level.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame with issue data.
+    group_by : {"obs_system", "obs_subsystem", "obs_component"}
+        The OBS hierarchy column to group by.
+    limit : int
+        Maximum number of rows to return (default 200).
+
+    Returns
+    -------
+    pd.DataFrame
+        Aggregated DataFrame with columns: group_by column, count,
+        time_lost_sum, activity_sum.
+    """
     if df.empty:
         return df
-    out = _base(df)
+
+    out = add_derived_metrics(df)
     agg = (
-        out.groupby("obs_system", dropna=False)
+        out.groupby(group_by, dropna=False)
         .agg(
             count=("key", "count"),
             time_lost_sum=("time_lost_value", "sum"),
@@ -35,39 +50,19 @@ def aggregate_by_obs_system(df: pd.DataFrame, limit: int = 200) -> pd.DataFrame:
         .reset_index()
     )
     return agg
+
+
+# Convenience functions for backward compatibility
+def aggregate_by_obs_system(df: pd.DataFrame, limit: int = 200) -> pd.DataFrame:
+    """Aggregate issues by OBS system level."""
+    return aggregate_by_obs_hierarchy(df, group_by="obs_system", limit=limit)
 
 
 def aggregate_by_obs_subsystem(df: pd.DataFrame, limit: int = 200) -> pd.DataFrame:
-    if df.empty:
-        return df
-    out = _base(df)
-    agg = (
-        out.groupby("obs_subsystem", dropna=False)
-        .agg(
-            count=("key", "count"),
-            time_lost_sum=("time_lost_value", "sum"),
-            activity_sum=("total_activity_in_range", "sum"),
-        )
-        .sort_values(by=["time_lost_sum", "activity_sum"], ascending=False)
-        .head(limit)
-        .reset_index()
-    )
-    return agg
+    """Aggregate issues by OBS subsystem level."""
+    return aggregate_by_obs_hierarchy(df, group_by="obs_subsystem", limit=limit)
 
 
 def aggregate_by_obs_component(df: pd.DataFrame, limit: int = 200) -> pd.DataFrame:
-    if df.empty:
-        return df
-    out = _base(df)
-    agg = (
-        out.groupby("obs_component", dropna=False)
-        .agg(
-            count=("key", "count"),
-            time_lost_sum=("time_lost_value", "sum"),
-            activity_sum=("total_activity_in_range", "sum"),
-        )
-        .sort_values(by=["time_lost_sum", "activity_sum"], ascending=False)
-        .head(limit)
-        .reset_index()
-    )
-    return agg
+    """Aggregate issues by OBS component level."""
+    return aggregate_by_obs_hierarchy(df, group_by="obs_component", limit=limit)

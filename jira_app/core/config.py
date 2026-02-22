@@ -5,9 +5,97 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+# =============================================================================
+# Jira Connection Settings
+# =============================================================================
 JIRA_DEFAULT_SERVER = "https://rubinobs.atlassian.net"
 TIMEZONE = "America/Santiago"
+DEFAULT_PROJECT_KEY = "OBS"
 
+# =============================================================================
+# API Comment Authors (OLE/LOVE integration)
+# These are special system accounts whose comments are tracked separately.
+# =============================================================================
+API_COMMENT_AUTHORS: frozenset[str] = frozenset(
+    {
+        "Rubin Jira API Access",  # OLE API display name
+        "love-api",  # LOVE system integration
+    }
+)
+
+# =============================================================================
+# Workflow Status Configuration
+# =============================================================================
+# Canonical display order for status columns/charts
+STATUS_DISPLAY_ORDER: Sequence[str] = (
+    "Reported",
+    "To Do",
+    "In Progress",
+    "Testing",
+    "Tracking",
+    "Blocked",
+    "Transferred",
+    "Duplicate",
+    "Cancelled",
+    "Done",
+)
+
+# Statuses that indicate a ticket is closed/terminal
+TERMINAL_STATUSES: frozenset[str] = frozenset(
+    {
+        "Done",
+        "Cancelled",
+        "Duplicate",
+        "Transferred",
+    }
+)
+
+# Map various status strings to canonical display names
+# Keys should be lowercase for case-insensitive matching
+STATUS_ALIASES: dict[str, str] = {
+    # Initial/Open statuses
+    "reported": "Reported",
+    "to do": "To Do",
+    "todo": "To Do",
+    "open": "To Do",
+    "new": "To Do",
+    # In Progress variants
+    "in progress": "In Progress",
+    "inprogress": "In Progress",
+    "in-progress": "In Progress",
+    "working": "In Progress",
+    # Testing/Tracking
+    "testing": "Testing",
+    "tracking": "Tracking",
+    # Blocked
+    "blocked": "Blocked",
+    # Cancelled variants
+    "cancelled": "Cancelled",
+    "canceled": "Cancelled",
+    # Done variants
+    "done": "Done",
+    "resolved": "Done",
+    "closed": "Done",
+    "complete": "Done",
+    "completed": "Done",
+    # Duplicate/Transferred
+    "duplicate": "Duplicate",
+    "duplicated": "Duplicate",
+    "transferred": "Transferred",
+}
+
+# =============================================================================
+# UI Default Values
+# =============================================================================
+DEFAULT_DATE_RANGE_DAYS: int = 30  # Default lookback period for date pickers
+DEFAULT_STALE_DAYS: int = 30  # Default threshold for stale ticket detection
+DEFAULT_HISTORY_FALLBACK_DAYS: int = 365  # Fallback when no created date available
+DEFAULT_TOP_N: int = 20  # Default number of items in top-N lists
+DEFAULT_WARN_AGE_DAYS: int = 14  # Default warning threshold for ticket age
+
+# =============================================================================
+# Priority Configuration
+# =============================================================================
 DEFAULT_TREND_PRIORITIES = ["Blocker", "Critical", "High", "Medium", "Low"]
 
 PRIORITY_MAPPING = {
@@ -19,6 +107,9 @@ PRIORITY_MAPPING = {
     "Undefined": 0,
 }
 
+# =============================================================================
+# Jira Custom Field IDs
+# =============================================================================
 FIELD_IDS = {
     "obs_hierarchy": "customfield_10476",
     "time_lost": "customfield_10106",

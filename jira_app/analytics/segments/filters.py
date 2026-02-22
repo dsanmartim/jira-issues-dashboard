@@ -7,79 +7,70 @@ from contextlib import suppress
 import pandas as pd
 import pytz
 
-from jira_app.analytics.metrics.activity import normalize_timestamp
+from jira_app.analytics.metrics.activity import (
+    count_comments_in_range,
+    count_histories_in_range,
+    normalize_timestamp,
+)
+from jira_app.core.config import API_COMMENT_AUTHORS, TERMINAL_STATUSES
 
-OLE_API_DISPLAY_NAME = "Rubin Jira API Access"
+
+def _normalize_range_timestamps(start, end):
+    """Normalize start/end timestamps for range filtering.
+
+    Returns (start_ts, end_ts, target_tz) or (None, None, None) if invalid.
+    """
+    start_ts = pd.to_datetime(start, errors="coerce")
+    end_ts = pd.to_datetime(end, errors="coerce")
+    if start_ts is None or pd.isna(start_ts) or end_ts is None or pd.isna(end_ts):
+        return None, None, None
+    if getattr(start_ts, "tzinfo", None) is None:
+        start_ts = start_ts.tz_localize(pytz.UTC)
+    if getattr(end_ts, "tzinfo", None) is None:
+        end_ts = end_ts.tz_localize(pytz.UTC)
+    target_tz = start_ts.tz
+    return start_ts, end_ts, target_tz
 
 
 def most_active(df: pd.DataFrame, start, end) -> pd.DataFrame:
+    """Filter and sort by activity (comments + history changes) in date range."""
     if df.empty:
         return df
     out = df.copy()
+
+    # Use pre-computed comments_in_range or fall back to shared utility
     if "comments_in_range" in out.columns:
         out["filtered_comments_count"] = out["comments_in_range"]
     else:
-        start_ts = pd.to_datetime(start, errors="coerce")
-        end_ts = pd.to_datetime(end, errors="coerce")
-        if start_ts is None or pd.isna(start_ts) or end_ts is None or pd.isna(end_ts):
+        start_ts, end_ts, target_tz = _normalize_range_timestamps(start, end)
+        if start_ts is None:
             out["filtered_comments_count"] = 0
+        elif "comments" in out.columns:
+            out["filtered_comments_count"] = out["comments"].apply(
+                lambda c: count_comments_in_range(c, start_ts, end_ts, target_tz)
+            )
         else:
-            if getattr(start_ts, "tzinfo", None) is None:
-                start_ts = start_ts.tz_localize(pytz.UTC)
-            if getattr(end_ts, "tzinfo", None) is None:
-                end_ts = end_ts.tz_localize(pytz.UTC)
-            target_tz = start_ts.tz
+            out["filtered_comments_count"] = 0
 
-            def comment_count(comments):
-                if not isinstance(comments, list):
-                    return 0
-                total = 0
-                for comment in comments:
-                    if not isinstance(comment, dict):
-                        continue
-                    ts = normalize_timestamp(comment.get("created"), target_tz)
-                    if ts is None or ts < start_ts or ts > end_ts:
-                        continue
-                    total += 1
-                return total
-
-            if "comments" in out.columns:
-                out["filtered_comments_count"] = out["comments"].apply(comment_count)
-            else:
-                out["filtered_comments_count"] = 0
-
+    # Use pre-computed history counts or total_activity_in_range
     if "filtered_histories_count" not in out.columns:
         if "status_changes" in out.columns and "other_changes" in out.columns:
             out["filtered_histories_count"] = out["status_changes"] + out["other_changes"]
+        elif "total_activity_in_range" in out.columns and "comments_in_range" in out.columns:
+            # Derive from total minus comments
+            out["filtered_histories_count"] = out["total_activity_in_range"] - out["comments_in_range"]
         else:
-            start_ts = pd.to_datetime(start, errors="coerce")
-            end_ts = pd.to_datetime(end, errors="coerce")
-            if start_ts is None or pd.isna(start_ts) or end_ts is None or pd.isna(end_ts):
+            start_ts, end_ts, target_tz = _normalize_range_timestamps(start, end)
+            if start_ts is None:
                 out["filtered_histories_count"] = 0
+            elif "histories" in out.columns:
+                hist = out["histories"].apply(
+                    lambda h: count_histories_in_range(h, start_ts, end_ts, target_tz)
+                )
+                out["filtered_histories_count"] = hist.apply(lambda t: t[0] + t[1])
             else:
-                if getattr(start_ts, "tzinfo", None) is None:
-                    start_ts = start_ts.tz_localize(pytz.UTC)
-                if getattr(end_ts, "tzinfo", None) is None:
-                    end_ts = end_ts.tz_localize(pytz.UTC)
-                target_tz = start_ts.tz
+                out["filtered_histories_count"] = 0
 
-                def history_count(histories):
-                    if not isinstance(histories, list):
-                        return 0
-                    total = 0
-                    for history in histories:
-                        if not isinstance(history, dict):
-                            continue
-                        ts = normalize_timestamp(history.get("created"), target_tz)
-                        if ts is None or ts < start_ts or ts > end_ts:
-                            continue
-                        total += 1
-                    return total
-
-                if "histories" in out.columns:
-                    out["filtered_histories_count"] = out["histories"].apply(history_count)
-                else:
-                    out["filtered_histories_count"] = 0
     out["activity_score"] = out["filtered_comments_count"] + out["filtered_histories_count"]
     return out.sort_values("activity_score", ascending=False)
 
@@ -92,10 +83,12 @@ def most_commented(df: pd.DataFrame, start, end) -> pd.DataFrame:
 
 
 def blocker_critical(df: pd.DataFrame) -> pd.DataFrame:
+    """Filter for open Blocker/Critical priority tickets."""
     if df.empty:
         return df
-    mask = df["priority"].astype(str).str.startswith(("Blocker", "Critical")) & (df["status"] != "Done")
-    return df[mask].copy()
+    is_high_priority = df["priority"].astype(str).str.startswith(("Blocker", "Critical"))
+    is_open = ~df["status"].isin(TERMINAL_STATUSES)
+    return df[is_high_priority & is_open].copy()
 
 
 def testing_tracking(df: pd.DataFrame) -> pd.DataFrame:
@@ -108,10 +101,13 @@ def testing_tracking(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def most_time_lost(df: pd.DataFrame, start, end) -> pd.DataFrame:
+    """Sort by time lost value (uses pre-computed or derives from time_lost column)."""
     if df.empty:
         return df
     out = df.copy()
-    out["time_lost_value"] = pd.to_numeric(out.get("time_lost"), errors="coerce").fillna(0)
+    # Use pre-computed time_lost_value if available, otherwise derive
+    if "time_lost_value" not in out.columns:
+        out["time_lost_value"] = pd.to_numeric(out.get("time_lost"), errors="coerce").fillna(0)
     return out.sort_values("time_lost_value", ascending=False)
 
 
@@ -124,18 +120,30 @@ def weighted_activity(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def ole_commented(df: pd.DataFrame, start, end, author: str = OLE_API_DISPLAY_NAME) -> pd.DataFrame:
+def ole_commented(
+    df: pd.DataFrame,
+    start,
+    end,
+    authors: frozenset[str] | None = None,
+) -> pd.DataFrame:
+    """Filter issues with comments from API/system authors in date range.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame with issue data.
+    start, end : datetime-like
+        Date range for filtering comments.
+    authors : frozenset[str] | None
+        Set of author names to match. Defaults to API_COMMENT_AUTHORS from config.
+    """
     if df.empty:
         return df
-    start_ts = pd.to_datetime(start, errors="coerce")
-    end_ts = pd.to_datetime(end, errors="coerce")
-    if start_ts is None or pd.isna(start_ts) or end_ts is None or pd.isna(end_ts):
+    if authors is None:
+        authors = API_COMMENT_AUTHORS
+    start_ts, end_ts, target_tz = _normalize_range_timestamps(start, end)
+    if start_ts is None:
         return pd.DataFrame()
-    if getattr(start_ts, "tzinfo", None) is None:
-        start_ts = start_ts.tz_localize(pytz.UTC)
-    if getattr(end_ts, "tzinfo", None) is None:
-        end_ts = end_ts.tz_localize(pytz.UTC)
-    target_tz = start_ts.tz
 
     def extract_stats(comments):
         count = 0
@@ -146,7 +154,7 @@ def ole_commented(df: pd.DataFrame, start, end, author: str = OLE_API_DISPLAY_NA
             if not isinstance(comment, dict):
                 continue
             author_name = str(comment.get("author") or "").strip()
-            if author_name != author:
+            if author_name not in authors:
                 continue
             ts = normalize_timestamp(comment.get("created"), target_tz)
             if ts is None:

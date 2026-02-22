@@ -7,23 +7,31 @@ concerns separated and ease future extension (e.g., adding a "Reviewer" persona)
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 
 import pandas as pd
 import pytz
 import streamlit as st
+from jira import JIRAError
 
 from jira_app.app import register_page
-from jira_app.core.config import TIMEZONE
+from jira_app.core.config import (
+    DEFAULT_DATE_RANGE_DAYS,
+    DEFAULT_HISTORY_FALLBACK_DAYS,
+    DEFAULT_PROJECT_KEY,
+    TIMEZONE,
+)
 from jira_app.core.service import ActivityWeights
 from jira_app.pages.assignees import render_assignee_tab
 from jira_app.pages.reporter import render_reporter_tab
 from jira_app.visual.progress import ProgressReporter
 
+logger = logging.getLogger(__name__)
+
 TZ = pytz.timezone(TIMEZONE)
 
 PAGE_KEY = "persona_insights"  # namespace for session keys to avoid collisions
-PROJECT_KEY = "OBS"  # TODO: make configurable if future multi-project support desired
 
 
 @register_page("Assignee | Reporter Insights")
@@ -42,7 +50,7 @@ def render():  # noqa: D401 - Streamlit entrypoint
         return
 
     # Persist project key for downstream components (mirrors earlier implementation)
-    st.session_state["project_key"] = PROJECT_KEY
+    st.session_state["project_key"] = DEFAULT_PROJECT_KEY
 
     # Scope selector: Date range vs Whole project (full history)
     weights = st.session_state.get("dashboard_weights") or ActivityWeights()
@@ -69,7 +77,7 @@ def render():  # noqa: D401 - Streamlit entrypoint
     end_key = f"{PAGE_KEY}_end_date"
     default_start = st.session_state.get(start_key) or st.session_state.get("start_date")
     if default_start is None:
-        default_start = (now_tz - timedelta(days=30)).date()
+        default_start = (now_tz - timedelta(days=DEFAULT_DATE_RANGE_DAYS)).date()
     default_end = st.session_state.get(end_key) or st.session_state.get("end_date") or now_tz.date()
     date_disabled = scope_choice != "Date range"
     start_date = st.date_input("Start date", value=default_start, key=start_key, disabled=date_disabled)
@@ -86,7 +94,7 @@ def render():  # noqa: D401 - Streamlit entrypoint
                 end_dt = TZ.localize(datetime.combine(end_date, datetime.max.time()))
                 reporter.update("Requesting updated issues from Jira")
                 df = issue_service.fetch_and_enrich_range(
-                    PROJECT_KEY,
+                    DEFAULT_PROJECT_KEY,
                     start_dt,
                     end_dt,
                     weights=weights,
@@ -96,7 +104,7 @@ def render():  # noqa: D401 - Streamlit entrypoint
             else:  # Whole project full history
                 reporter.update("Requesting full project issue set from Jira")
                 df_raw = issue_service.fetch_full_project(
-                    PROJECT_KEY,
+                    DEFAULT_PROJECT_KEY,
                     progress=reporter.callback,
                     max_days=None,
                 )
@@ -108,7 +116,7 @@ def render():  # noqa: D401 - Streamlit entrypoint
                     created_col = pd.to_datetime(df_raw["created"], errors="coerce", utc=True)
                 earliest = created_col.min() if created_col is not None else None
                 if earliest is None or pd.isna(earliest):
-                    earliest = datetime.utcnow() - timedelta(days=365)
+                    earliest = datetime.utcnow() - timedelta(days=DEFAULT_HISTORY_FALLBACK_DAYS)
                 if hasattr(earliest, "tz_convert"):
                     start_dt = earliest.tz_convert(TZ)
                 else:
@@ -125,7 +133,7 @@ def render():  # noqa: D401 - Streamlit entrypoint
             st.session_state[data_key] = {
                 "scope": mode,
                 "df": df,
-                "project": PROJECT_KEY,
+                "project": DEFAULT_PROJECT_KEY,
                 "start": start_dt,
                 "end": end_dt,
                 "full_project": mode == "Whole project",
@@ -134,8 +142,14 @@ def render():  # noqa: D401 - Streamlit entrypoint
                 reporter.complete(f"Loaded {len(df)} issues updated between {start_date} and {end_date}.")
             else:
                 reporter.complete(f"Loaded full history with {len(df)} issues.")
-        except Exception as exc:  # pragma: no cover
-            reporter.error(f"Failed to fetch date-range issues: {exc}")
+        except JIRAError as exc:
+            error_msg = exc.text if hasattr(exc, "text") else str(exc)
+            logger.error("Jira API error fetching persona data: %s", error_msg)
+            reporter.error(f"Failed to fetch issues: {error_msg}")
+            raise
+        except (ValueError, KeyError) as exc:
+            logger.error("Data processing error in persona insights: %s", exc)
+            reporter.error(f"Failed to process issues: {exc}")
             raise
 
     data_state = st.session_state.get(data_key)

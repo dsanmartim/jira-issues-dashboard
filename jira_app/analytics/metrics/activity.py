@@ -42,12 +42,84 @@ def within_range(ts, start_local, end_local, *, tzinfo):
     return (normalized >= start_local) and (normalized <= end_local)
 
 
+def count_comments_in_range(comments: list, start, end, target_tz) -> int:
+    """Count comments that fall within the specified date range.
+
+    Parameters
+    ----------
+    comments : list
+        List of comment dicts, each with a 'created' timestamp field.
+    start : datetime-like
+        Start of the range (timezone-aware).
+    end : datetime-like
+        End of the range (timezone-aware).
+    target_tz : tzinfo
+        Target timezone for normalization.
+
+    Returns
+    -------
+    int
+        Number of comments within the range.
+    """
+    if not isinstance(comments, list):
+        return 0
+    total = 0
+    for c in comments:
+        if not isinstance(c, dict):
+            continue
+        if within_range(c.get("created"), start, end, tzinfo=target_tz):
+            total += 1
+    return total
+
+
+def count_histories_in_range(histories: list, start, end, target_tz) -> tuple[int, int]:
+    """Count history entries that fall within the specified date range.
+
+    Parameters
+    ----------
+    histories : list
+        List of history dicts, each with a 'created' timestamp and 'items' list.
+    start : datetime-like
+        Start of the range (timezone-aware).
+    end : datetime-like
+        End of the range (timezone-aware).
+    target_tz : tzinfo
+        Target timezone for normalization.
+
+    Returns
+    -------
+    tuple[int, int]
+        (status_changes, other_changes) counts within the range.
+    """
+    status_changes = 0
+    other_changes = 0
+    if not isinstance(histories, list):
+        return status_changes, other_changes
+
+    def _field_name(it):
+        if isinstance(it, dict):
+            return it.get("field")
+        return getattr(it, "field", None)
+
+    for h in histories:
+        if not isinstance(h, dict):
+            continue
+        if not within_range(h.get("created"), start, end, tzinfo=target_tz):
+            continue
+        items = h.get("items") or []
+        if any(_field_name(it) == "status" for it in items):
+            status_changes += 1
+        else:
+            other_changes += 1
+    return status_changes, other_changes
+
+
 def add_weighted_activity(
     df: pd.DataFrame,
     start,
     end,
-    w_comment: float = 2.0,
-    w_status: float = 0.5,
+    w_comment: float = 1.0,
+    w_status: float = 2.0,
     w_other: float = 0.5,
 ) -> pd.DataFrame:
     if df.empty:
@@ -66,44 +138,14 @@ def add_weighted_activity(
     range_start = range_start.tz_convert(target_tz)
     range_end = range_end.tz_convert(target_tz)
 
-    def comment_count(comments):
-        if not isinstance(comments, list):
-            return 0
-        total = 0
-        for c in comments:
-            if not isinstance(c, dict):
-                continue
-            if within_range(c.get("created"), range_start, range_end, tzinfo=target_tz):
-                total += 1
-        return total
-
-    def history_counts(histories):
-        status_changes = 0
-        other_changes = 0
-        if not isinstance(histories, list):
-            return status_changes, other_changes
-        for h in histories:
-            if not isinstance(h, dict):
-                continue
-            if not within_range(h.get("created"), range_start, range_end, tzinfo=target_tz):
-                continue
-            items = h.get("items") or []
-
-            def _field_name(it):
-                if isinstance(it, dict):
-                    return it.get("field")
-                return getattr(it, "field", None)
-
-            if any(_field_name(it) == "status" for it in items):
-                status_changes += 1
-            else:
-                other_changes += 1
-        return status_changes, other_changes
-
-    out["comments_in_range"] = out["comments"].apply(comment_count)
-    hist = out["histories"].apply(lambda hs: history_counts(hs))
+    # Use shared utility functions for counting
+    out["comments_in_range"] = out["comments"].apply(
+        lambda c: count_comments_in_range(c, range_start, range_end, target_tz)
+    )
+    hist = out["histories"].apply(lambda hs: count_histories_in_range(hs, range_start, range_end, target_tz))
     out["status_changes"] = hist.apply(lambda t: t[0])
     out["other_changes"] = hist.apply(lambda t: t[1])
+    out["total_activity_in_range"] = out["comments_in_range"] + out["status_changes"] + out["other_changes"]
     out["activity_score_weighted"] = (
         out["comments_in_range"] * w_comment
         + out["status_changes"] * w_status
