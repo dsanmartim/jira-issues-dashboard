@@ -23,6 +23,7 @@ from jira_app.core.config import (
     TIMEZONE,
 )
 from jira_app.core.service import ActivityWeights
+from jira_app.core.status import DONE_STATUSES_LOWER
 from jira_app.pages.assignees import render_assignee_tab
 from jira_app.pages.reporter import render_reporter_tab
 from jira_app.visual.progress import ProgressReporter
@@ -252,8 +253,7 @@ def render():  # noqa: D401 - Streamlit entrypoint
             status_series_full = df["status"].astype(str).str.lower()
         else:
             status_series_full = pd.Series([""] * len(df))
-        done_set_global = {s.lower() for s in ["done", "resolved", "closed", "cancelled", "completed"]}
-        open_at_end_mask = ~status_series_full.isin(done_set_global)
+        open_at_end_mask = ~status_series_full.isin(DONE_STATUSES_LOWER)
 
         # Activity score (assignee) across all updated-in-range tickets
         activity_top = []

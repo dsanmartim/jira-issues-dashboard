@@ -12,7 +12,8 @@ from jira_app.analytics.metrics.activity import (
     count_histories_in_range,
     normalize_timestamp,
 )
-from jira_app.core.config import API_COMMENT_AUTHORS, TERMINAL_STATUSES
+from jira_app.core.config import API_COMMENT_AUTHORS
+from jira_app.core.status import DONE_STATUSES_LOWER
 
 
 def _normalize_range_timestamps(start, end):
@@ -87,7 +88,7 @@ def blocker_critical(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     is_high_priority = df["priority"].astype(str).str.startswith(("Blocker", "Critical"))
-    is_open = ~df["status"].isin(TERMINAL_STATUSES)
+    is_open = ~df["status"].astype(str).str.lower().isin(DONE_STATUSES_LOWER)
     return df[is_high_priority & is_open].copy()
 
 

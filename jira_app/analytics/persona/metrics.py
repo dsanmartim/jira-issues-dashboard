@@ -8,8 +8,8 @@ import pytz
 
 from jira_app.core.column_config import get_columns
 from jira_app.core.config import TIMEZONE
+from jira_app.core.status import DONE_STATUSES_LOWER
 
-DONE_STATUSES = {"done", "resolved", "closed", "cancelled", "completed", "duplicate", "duplicated"}
 TZ = pytz.timezone(TIMEZONE)
 
 
@@ -34,7 +34,7 @@ def build_open_workload(
         return pd.DataFrame()
 
     status_series = df["status"].astype(str).str.lower()
-    open_df = df[~status_series.isin(DONE_STATUSES)].copy()
+    open_df = df[~status_series.isin(DONE_STATUSES_LOWER)].copy()
     if open_df.empty:
         return pd.DataFrame()
 
@@ -267,7 +267,7 @@ def prepare_open_ticket_detail(
 
     if include_status_filter and "status" in working.columns:
         status_series = working["status"].astype(str).str.lower()
-        working = working[~status_series.isin(DONE_STATUSES)]
+        working = working[~status_series.isin(DONE_STATUSES_LOWER)]
 
     if working.empty:
         return pd.DataFrame()

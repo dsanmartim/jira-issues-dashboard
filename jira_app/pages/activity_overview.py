@@ -1,6 +1,5 @@
 """Activity Overview page."""
 
-import math
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
@@ -16,178 +15,33 @@ from jira_app.analytics.aggregations.obs import (
     aggregate_by_obs_system,
 )
 from jira_app.analytics.metrics.activity import normalize_timestamp
+from jira_app.analytics.metrics.binning import (
+    create_histogram_chart,
+    determine_time_bin_step,
+)
+from jira_app.analytics.metrics.status_flow import build_status_duration_frame
 from jira_app.app import register_page
 from jira_app.core.config import (
     API_COMMENT_AUTHORS,
     DEFAULT_DATE_RANGE_DAYS,
+    DEFAULT_TREND_PRIORITIES,
     DEFAULT_WARN_AGE_DAYS,
-    STATUS_ALIASES,
     STATUS_DISPLAY_ORDER,
     TERMINAL_STATUSES,
     TIMEZONE,
 )
 from jira_app.core.service import ActivityWeights
+from jira_app.core.status import (
+    normalize_workflow_status,
+)
 from jira_app.features.activity_overview.context import build_context
-from jira_app.visual.charts import blocker_critical_trend, created_trend
-from jira_app.visual.column_metadata import apply_column_metadata
+from jira_app.visual.charts import blocker_critical_trend, create_bar_chart, created_trend
+from jira_app.visual.leaderboard import display_leaderboard, display_ticket_list
 from jira_app.visual.progress import ProgressReporter
 from jira_app.visual.tables import prepare_ticket_table
 from jira_app.visual.wordcloud import WORDCLOUD_AVAILABLE, wordcloud_png
 
-# Derive done statuses from terminal statuses (lowercase for matching)
-DONE_STATUSES = {s.lower() for s in TERMINAL_STATUSES} | {"resolved", "closed", "completed", "duplicated"}
 CRITICAL_PREFIXES = ("Blocker", "Critical")
-
-
-def _normalize_workflow_status(value: str | None) -> str:
-    """Map raw Jira status to the canonical workflow status names.
-
-    Returns "Unknown" for any unmapped/empty value so we can surface new statuses.
-    Uses STATUS_ALIASES from config for the mapping.
-    """
-    if not value:
-        return "Unknown"
-    text = str(value).strip().lower()
-    # Check config aliases first
-    if text in STATUS_ALIASES:
-        return STATUS_ALIASES[text]
-    # Check if it matches a display status (case-insensitive)
-    for status in STATUS_DISPLAY_ORDER:
-        if text == status.lower():
-            return status
-    return "Unknown"
-
-
-def create_bar_chart(data: pd.DataFrame, x_col: str, y_col: str, title: str | None):
-    if data is None or data.empty or x_col not in data or y_col not in data:
-        return None
-    chart = (
-        alt.Chart(data)
-        .mark_bar()
-        .encode(
-            x=alt.X(f"{x_col}:N", sort="-y", title=x_col.replace("_", " ").title()),
-            y=alt.Y(f"{y_col}:Q", title=y_col.replace("_", " ").title()),
-            tooltip=[x_col, y_col],
-        )
-        .properties(height=280)
-    )
-    if title:
-        chart = chart.properties(title=title)
-    return chart
-
-
-def determine_time_bin_step(
-    values: pd.Series,
-    *,
-    target_bins: int = 12,
-    min_step: float = 1.0,
-) -> float | None:
-    if values is None:
-        return None
-
-    numeric = pd.to_numeric(values, errors="coerce").dropna()
-    if numeric.empty:
-        return None
-    value_range = float(numeric.max() - numeric.min())
-    if math.isnan(value_range) or value_range <= 0:
-        return float(min_step)
-    bins = max(target_bins, 1)
-    raw_step = value_range / bins
-    step = max(math.ceil(raw_step), min_step)
-    return float(step)
-
-
-def build_time_bucket_spec(
-    values: pd.Series,
-    *,
-    target_bins: int = 12,
-    min_step: float = 1.0,
-):
-    if values is None:
-        return None
-    numeric = pd.to_numeric(values, errors="coerce").dropna()
-    if numeric.empty:
-        return None
-    step = determine_time_bin_step(numeric, target_bins=target_bins, min_step=min_step)
-    if step is None:
-        return None
-    max_value = float(numeric.max())
-    if math.isnan(max_value) or max_value <= 0:
-        return None
-    max_edge = math.ceil(max_value / step) * step
-    edges: list[float] = [0.0]
-    current = step
-    while current <= max_edge + 1e-9:
-        edges.append(round(current, 6))
-        current += step
-    edges.append(float("inf"))
-    labels: list[str] = []
-    for idx in range(len(edges) - 2):
-        lower = int(edges[idx])
-        upper = int(edges[idx + 1])
-        labels.append(f"{lower}–<{upper}d")
-    labels.append(f"≥{int(edges[-2])}d")
-    return {
-        "bins": edges,
-        "labels": labels,
-        "step": step,
-    }
-
-
-def create_histogram_chart(
-    data: pd.DataFrame,
-    value_col: str,
-    *,
-    title: str,
-    color_col: str | None = None,
-    facet_col: str | None = None,
-    facet_columns: int = 2,
-    bin_step: float | None = None,
-    max_bins: int = 20,
-):
-    if data is None or data.empty or value_col not in data:
-        return None
-
-    bin_args: dict[str, float | int] = {}
-    if bin_step is not None and bin_step > 0:
-        bin_args["step"] = bin_step
-    else:
-        bin_args["maxbins"] = max_bins
-
-    base = (
-        alt.Chart(data)
-        .mark_bar()
-        .encode(
-            x=alt.X(
-                f"{value_col}:Q",
-                bin=alt.Bin(**bin_args),
-                title=value_col.replace("_", " ").title(),
-            ),
-            y=alt.Y("count()", title="Count"),
-        )
-        .properties(title=title, height=280)
-    )
-
-    if color_col and color_col in data:
-        base = base.encode(
-            color=alt.Color(
-                f"{color_col}:N",
-                legend=alt.Legend(title=color_col.replace("_", " ").title()),
-            )
-        )
-
-    if facet_col and facet_col in data:
-        facet_chart = base.facet(
-            column=alt.Column(
-                f"{facet_col}:N",
-                title=facet_col.replace("_", " ").title(),
-            ),
-            columns=facet_columns,
-            spacing=12,
-        )
-        return facet_chart.resolve_scale(x="independent", y="independent")
-
-    return base
 
 
 def _build_ole_obs_heatmaps(
@@ -453,7 +307,7 @@ def _prepare_commonly_reported_faults(df: pd.DataFrame, obs_column: str, tz) -> 
 
     status_series = working.get("status")
     if status_series is not None:
-        normalized_status = status_series.fillna("").astype(str).apply(_normalize_workflow_status)
+        normalized_status = status_series.fillna("").astype(str).apply(normalize_workflow_status)
     else:
         normalized_status = pd.Series("Unknown", index=working.index, dtype=str)
     working["__is_open"] = ~normalized_status.isin(TERMINAL_STATUSES)
@@ -520,251 +374,6 @@ def _prepare_commonly_reported_faults(df: pd.DataFrame, obs_column: str, tz) -> 
     return grouped
 
 
-def _normalize_to_tz(value, tz):
-    if value is None or pd.isna(value):
-        return None
-    try:
-        ts = pd.to_datetime(value, utc=True, errors="coerce")
-    except Exception:
-        return None
-    if pd.isna(ts):
-        return None
-    return ts.tz_convert(tz)
-
-
-def _clean_status_name(value: str | None) -> str:
-    if not value:
-        return "Unknown"
-    text = str(value).strip()
-    if not text:
-        return "Unknown"
-    if text.lower() in {"oops", "nan", "none", "null"}:
-        return "Unknown"
-    return text
-
-
-def _issue_status_durations(row: pd.Series, tz, now_ts) -> dict[str, float]:
-    histories = row.get("histories")
-    if not isinstance(histories, list) or not histories:
-        return {}
-
-    events: list[tuple[datetime, str | None, str | None]] = []
-    for entry in histories:
-        created = _normalize_to_tz(entry.get("created"), tz)
-        if created is None:
-            continue
-        items = entry.get("items") or []
-        for item in items:
-            field_name = str(item.get("field") or "").lower()
-            if field_name != "status":
-                continue
-            from_status = _clean_status_name(item.get("fromString") or item.get("from"))
-            to_status = _clean_status_name(item.get("toString") or item.get("to"))
-            events.append((created, from_status, to_status))
-
-    if not events:
-        return {}
-
-    events.sort(key=lambda tup: tup[0])
-    created_dt = row.get("created_dt") or _normalize_to_tz(row.get("created"), tz)
-    resolution_dt = row.get("resolution_dt") or _normalize_to_tz(
-        row.get("resolution_date") or row.get("resolutiondate"), tz
-    )
-
-    current_status = _clean_status_name(events[0][1] or row.get("status"))
-    current_start = created_dt or events[0][0]
-    if current_start is None:
-        current_start = events[0][0]
-    if current_start is None:
-        return {}
-
-    durations: defaultdict[str, float] = defaultdict(float)
-
-    for change_time, _from_status, to_status in events:
-        if change_time is None or current_start is None:
-            continue
-        delta = (change_time - current_start).total_seconds() / 86400.0
-        if delta >= 0:
-            durations[current_status] += delta
-        current_status = _clean_status_name(to_status or current_status)
-        current_start = change_time
-
-    end_time = resolution_dt if resolution_dt is not None and not pd.isna(resolution_dt) else now_ts
-    if current_start is not None and end_time is not None and end_time > current_start:
-        delta = (end_time - current_start).total_seconds() / 86400.0
-        if delta >= 0:
-            durations[current_status] += delta
-
-    return dict(durations)
-
-
-def build_status_duration_frame(df: pd.DataFrame, tz, now_ts) -> pd.DataFrame:
-    if df.empty or "histories" not in df.columns:
-        return pd.DataFrame()
-
-    records: list[dict[str, object]] = []
-    for _, row in df.iterrows():
-        durations = _issue_status_durations(row, tz, now_ts)
-        if not durations:
-            continue
-        status_value = str(row.get("status") or "")
-        is_open = _normalize_workflow_status(status_value) not in TERMINAL_STATUSES
-        for status_name, days in durations.items():
-            if days is None or pd.isna(days):
-                continue
-            records.append(
-                {
-                    "key": row.get("key"),
-                    "status": _normalize_workflow_status(_clean_status_name(status_name)),
-                    "duration_days": float(days),
-                    "is_open": is_open,
-                }
-            )
-
-    if not records:
-        return pd.DataFrame()
-    return pd.DataFrame(records)
-
-
-def map_status_category(value: str | None) -> str:
-    normalized = _normalize_workflow_status(value)
-    if normalized in {"Reported", "To Do"}:
-        return "To Do"
-    if normalized in {"In Progress", "Testing", "Tracking"}:
-        return "In Progress"
-    if normalized in {"Done", "Cancelled", "Duplicate", "Transferred"}:
-        return "Done"
-    return "Other"
-
-
-def display_leaderboard(
-    df: pd.DataFrame | None,
-    *,
-    title: str,
-    server: str,
-    top_n: int,
-    metric_col: str | None,
-    metric_label: str | None = None,
-    extra_cols: list[str] | None = None,
-    caption: str | None = None,
-) -> None:
-    st.markdown(f"##### {title}")
-    if df is None or df.empty:
-        st.info("No data available for this view.")
-        return
-
-    work = df.copy()
-    display_metric: str | None = None
-    if metric_col and metric_col in work.columns:
-        work = work.sort_values(metric_col, ascending=False)
-        display_metric = metric_label or metric_col
-        if metric_label and metric_label != metric_col:
-            work = work.rename(columns={metric_col: display_metric})
-    elif metric_label and metric_label in work.columns:
-        display_metric = metric_label
-
-    trimmed = work.head(top_n).copy()
-    if trimmed.empty:
-        st.info("No data available for this view.")
-        return
-
-    def _normalize_name(name: str) -> str:
-        return name.strip().lower().replace(" ", "_") if isinstance(name, str) else ""
-
-    additional_cols: list[str] = []
-    raw_specific: list[str] = []
-    seen_extra_keys: set[str] = set()
-
-    if display_metric and display_metric in trimmed.columns:
-        key = _normalize_name(display_metric)
-        if key not in seen_extra_keys:
-            additional_cols.append(display_metric)
-            raw_specific.append(display_metric)
-            seen_extra_keys.add(key)
-
-    if extra_cols:
-        for col in extra_cols:
-            if col and col in trimmed.columns:
-                key = _normalize_name(col)
-                if key not in seen_extra_keys:
-                    additional_cols.append(col)
-                    raw_specific.append(col)
-                    seen_extra_keys.add(key)
-
-    numeric_one_decimal = {
-        "days_open",
-        "days_since_update",
-        "time_lost",
-        "time_lost_value",
-        "Time Lost",
-        "Weighted Score",
-    }
-    for col in numeric_one_decimal:
-        if col in trimmed.columns:
-            trimmed[col] = pd.to_numeric(trimmed[col], errors="coerce").round(1)
-
-    prepared, base_display_cols, cfg = prepare_ticket_table(trimmed, server, extra_columns=additional_cols)
-
-    display_cols: list[str] = []
-    available_cols = set(prepared.columns)
-    selected_keys: set[str] = set()
-
-    def _append_if_present(col: str):
-        normalized = _normalize_name(col)
-        if col in available_cols and normalized not in selected_keys:
-            display_cols.append(col)
-            selected_keys.add(normalized)
-
-    _append_if_present("Ticket")
-    _append_if_present("summary")
-
-    canonical_tail = [
-        "priority",
-        "assignee",
-        "status",
-        "time_lost",
-        "days_open",
-        "days_since_update",
-        "created",
-        "updated",
-        "labels",
-        "obs_system",
-        "obs_subsystem",
-        "obs_component",
-        "reporter",
-    ]
-    canonical_tail_keys = {_normalize_name(col) for col in canonical_tail}
-
-    specific_metrics: list[str] = [
-        col for col in raw_specific if _normalize_name(col) not in canonical_tail_keys
-    ]
-
-    for col in specific_metrics:
-        _append_if_present(col)
-
-    # Map normalized names to actual labels so renamed canonical columns keep order
-    normalized_available = {_normalize_name(col): col for col in prepared.columns}
-    for col in canonical_tail:
-        actual = normalized_available.get(_normalize_name(col))
-        if actual:
-            _append_if_present(actual)
-
-    for col in base_display_cols:
-        _append_if_present(col)
-
-    column_config = apply_column_metadata(display_cols, cfg)
-
-    st.dataframe(
-        prepared[display_cols],
-        hide_index=True,
-        column_config=column_config,
-        width="stretch",
-    )
-
-    if caption:
-        st.caption(caption)
-
-
 def render_wordcloud(text: str) -> None:
     if not WORDCLOUD_AVAILABLE:
         st.warning("Word cloud library not installed. Install 'wordcloud' to enable this chart.")
@@ -775,133 +384,6 @@ def render_wordcloud(text: str) -> None:
         st.image(image_bytes, width="stretch")
     else:
         st.warning("Text input was too small to build a word cloud.")
-
-
-def display_ticket_list(
-    df: pd.DataFrame | None,
-    *,
-    server: str,
-    tz,
-    date_col: str | None,
-    date_label: str | None,
-    empty_message: str,
-    sort_by: str | None = None,
-    ascending: bool = True,
-    extra_columns: list[str] | None = None,
-    height: int | str | None = None,
-    reorder_like_topn: bool = False,
-    caption: str | None = None,
-) -> None:
-    if df is None or df.empty:
-        st.info(empty_message)
-        return
-
-    table = df.copy()
-    target_label = date_label
-    if date_col and date_col in table.columns and target_label:
-        series = table[date_col]
-        if not pd.api.types.is_datetime64_any_dtype(series):
-            series = pd.to_datetime(series, errors="coerce", utc=True)
-            series = series.dt.tz_convert(tz)
-        else:
-            tzinfo = getattr(series.dt, "tz", None)
-            series = series.dt.tz_localize(tz) if tzinfo is None else series.dt.tz_convert(tz)
-        table[target_label] = series.dt.strftime("%Y-%m-%d %H:%M")
-        if date_col != target_label:
-            table = table.drop(columns=[date_col], errors="ignore")
-    elif date_col and date_col in table.columns:
-        target_label = date_col
-
-    if sort_by and sort_by in table.columns:
-        table = table.sort_values(by=sort_by, ascending=ascending)
-
-    additional_cols: list[str] = []
-    if extra_columns:
-        additional_cols.extend(extra_columns)
-    if target_label:
-        additional_cols.append(target_label)
-
-    prepared, base_display_cols, cfg = prepare_ticket_table(table, server, extra_columns=additional_cols)
-    if height is None:
-        # Default height sized to top-N rows to keep tables compact with scroll for overflow
-        target_rows = int(st.session_state.get("top_n", 15)) if "top_n" in st.session_state else 15
-        visible_rows = min(target_rows, len(prepared))
-        resolved_height: int | str = max(200, 46 + visible_rows * 34)
-    else:
-        resolved_height = height
-
-    # Optional: reorder columns to match the Top N ordering style
-    if reorder_like_topn:
-
-        def _normalize_name(name: str) -> str:
-            return name.strip().lower().replace(" ", "_") if isinstance(name, str) else ""
-
-        display_cols: list[str] = []
-        available_cols = set(prepared.columns)
-        selected_keys: set[str] = set()
-
-        def _append_if_present(col: str):
-            normalized = _normalize_name(col)
-            if col in available_cols and normalized not in selected_keys:
-                display_cols.append(col)
-                selected_keys.add(normalized)
-
-        _append_if_present("Ticket")
-        _append_if_present("summary")
-
-        # Treat extra_columns as the specific metrics to surface next
-        if extra_columns:
-            for col in extra_columns:
-                _append_if_present(col)
-
-        canonical_tail = [
-            "priority",
-            "assignee",
-            "status",
-            "time_lost",
-            "days_open",
-            "days_since_update",
-            "created",
-            "updated",
-            "labels",
-            "obs_system",
-            "obs_subsystem",
-            "obs_component",
-            "reporter",
-        ]
-        for col in canonical_tail:
-            _append_if_present(col)
-
-        for col in base_display_cols:
-            _append_if_present(col)
-
-        final_cols = [c for c in display_cols if c in prepared.columns]
-
-        # Merge human-readable labels and hover help like Top Tickets tables
-        column_config = apply_column_metadata(final_cols, cfg)
-
-        st.dataframe(
-            prepared[final_cols],
-            hide_index=True,
-            column_config=column_config,
-            width="stretch",
-            height=resolved_height,
-        )
-        if caption:
-            st.caption(caption)
-        return
-
-    # Default: existing display behavior
-    column_config = apply_column_metadata(base_display_cols, cfg)
-    st.dataframe(
-        prepared[base_display_cols],
-        hide_index=True,
-        column_config=column_config,
-        width="stretch",
-        height=resolved_height,
-    )
-    if caption:
-        st.caption(caption)
 
 
 @register_page("Activity Overview")
@@ -928,7 +410,7 @@ def render():
     if "top_n" not in st.session_state:
         st.session_state.top_n = 15
     if "trend_priorities" not in st.session_state:
-        st.session_state.trend_priorities = ["Blocker", "Critical", "High", "Medium", "Low"]
+        st.session_state.trend_priorities = list(DEFAULT_TREND_PRIORITIES)
     if "warn_age" not in st.session_state:
         st.session_state.warn_age = DEFAULT_WARN_AGE_DAYS
     if "weight_comment" not in st.session_state:
@@ -960,7 +442,7 @@ def render():
                 existing_df.get("priority").dropna().astype(str).sort_values().unique().tolist()
             )
         else:
-            available_priorities = ["Blocker", "Critical", "High", "Medium", "Low"]
+            available_priorities = list(DEFAULT_TREND_PRIORITIES)
 
         current_trends = [p for p in st.session_state.trend_priorities if p in available_priorities]
         if not current_trends:
@@ -1162,7 +644,7 @@ def render():
         real_resolved_count = int((~(dup_mask | cancel_mask)).sum())
 
     if "status" in df.columns:
-        normalized_status = df["status"].astype(str).apply(_normalize_workflow_status)
+        normalized_status = df["status"].astype(str).apply(normalize_workflow_status)
         open_mask = ~normalized_status.isin(TERMINAL_STATUSES)
     else:
         open_mask = pd.Series(True, index=df.index)
@@ -1482,7 +964,7 @@ def render():
     st.markdown(" ")
     if "status" in df.columns and not df["status"].isnull().all():
         status_series = df["status"].fillna("").astype(str)
-        normalized = status_series.apply(_normalize_workflow_status)
+        normalized = status_series.apply(normalize_workflow_status)
         counts = normalized.value_counts().rename_axis("status").reset_index(name="count")
         order = [s for s in STATUS_DISPLAY_ORDER if s in counts["status"].values]
         if (counts["status"] == "Unknown").any():
@@ -1544,7 +1026,7 @@ def render():
 
         # Normalize status and prepare base frame
         status_series = df["status"].fillna("").astype(str)
-        normalized = status_series.apply(_normalize_workflow_status)
+        normalized = status_series.apply(normalize_workflow_status)
         df_with_norm = df.copy()
         df_with_norm["__norm_status"] = normalized
 
@@ -1994,14 +1476,8 @@ def render():
     if "dashboard_segment_field" not in st.session_state:
         st.session_state.dashboard_segment_field = "priority"
     if "trend_priorities" not in st.session_state:
-        # Defer to available_priorities if defined later; fallback to common list
-        st.session_state.trend_priorities = [
-            "Blocker",
-            "Critical",
-            "High",
-            "Medium",
-            "Low",
-        ]
+        # Defer to available_priorities if defined later; fallback to config default
+        st.session_state.trend_priorities = list(DEFAULT_TREND_PRIORITIES)
     if "summary_obs_level" not in st.session_state:
         st.session_state.summary_obs_level = "OBS System"
     if "summary_status_filter" not in st.session_state:
@@ -2554,7 +2030,7 @@ def render():
         if not assignee_options:
             st.info("No assignees available for this dataset.")
         else:
-            status_series = df["status"].astype(str).apply(_normalize_workflow_status)
+            status_series = df["status"].astype(str).apply(normalize_workflow_status)
             open_mask = ~status_series.isin(TERMINAL_STATUSES)
             open_counts = assignee_series[open_mask].value_counts()
             top_assignee = open_counts.idxmax() if not open_counts.empty else assignee_options[0]

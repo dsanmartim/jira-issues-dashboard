@@ -9,6 +9,47 @@ import pytz
 from jira_app.core.config import TIMEZONE
 
 
+def create_bar_chart(
+    data: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    title: str | None = None,
+) -> alt.Chart | None:
+    """Create a simple bar chart.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        DataFrame containing the data to plot.
+    x_col : str
+        Column name for x-axis (categorical).
+    y_col : str
+        Column name for y-axis (quantitative).
+    title : str, optional
+        Chart title.
+
+    Returns
+    -------
+    alt.Chart or None
+        Altair chart object, or None if data is empty/invalid.
+    """
+    if data is None or data.empty or x_col not in data or y_col not in data:
+        return None
+    chart = (
+        alt.Chart(data)
+        .mark_bar()
+        .encode(
+            x=alt.X(f"{x_col}:N", sort="-y", title=x_col.replace("_", " ").title()),
+            y=alt.Y(f"{y_col}:Q", title=y_col.replace("_", " ").title()),
+            tooltip=[x_col, y_col],
+        )
+        .properties(height=280)
+    )
+    if title:
+        chart = chart.properties(title=title)
+    return chart
+
+
 def _format_ticket_list(group: pd.DataFrame) -> str:
     seen: set[str] = set()
     items: list[str] = []
