@@ -94,6 +94,10 @@ COLUMN_METADATA: dict[str, tuple[str, str, str | None]] = {
         "Raw activity score (comments plus history entries).",
         "int",
     ),
+    # Activity-record columns (used in Recent Activity tables)
+    "activity_type": ("Type", "Type of activity (Comment, Status Change, Field Change).", None),
+    "author": ("Author", "Person who performed the activity.", None),
+    "details": ("Details", "Summary of the change or comment content.", None),
 }
 
 

@@ -23,6 +23,7 @@ def main():
         return
     preferred_order = [
         "Activity Overview",  # main holistic view
+        "Personal View",  # user-specific triage
         "Assignee | Reporter Insights",  # persona metrics
         "Stale Tickets",  # focused remediation list
         "Setup / Connection",  # configuration
