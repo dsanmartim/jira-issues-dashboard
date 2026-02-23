@@ -200,11 +200,15 @@ JIRA_FETCH_BASE_FIELDS = [
     "resolution",
     "resolutiondate",
     "comment",
+    "watches",  # Watcher information for Personal View
     FIELD_IDS["time_lost"],
     "issuetype",
     "labels",
     FIELD_IDS["obs_hierarchy"],
 ]
+
+# Project keys for Personal View page
+DEFAULT_PROJECT_KEYS: Sequence[str] = ("OBS", "OSW", "RSO", "DM", "SITCOM")
 
 ISSUE_CORE_COLUMNS: Sequence[str] = (
     "key",

@@ -99,16 +99,19 @@ def created_trend(df: pd.DataFrame, start, end, priorities=None):
     chart_df["tickets"] = chart_df["tickets"].fillna("").astype(str)
     chart_df["date"] = pd.to_datetime(chart_df["date"])
 
+    # Only show line and dots on days with actual activity
+    nonzero_df = chart_df[chart_df["count"] > 0]
+
     base_line = (
-        alt.Chart(chart_df)
+        alt.Chart(nonzero_df)
         .mark_line(color="#1f77b4")
         .encode(
             x=alt.X("date:T", title="Date"),
-            y=alt.Y("count:Q", title="Tickets Created"),
+            y=alt.Y("count:Q", title="Tickets Created", axis=alt.Axis(tickMinStep=1)),
         )
     )
     points = (
-        alt.Chart(chart_df)
+        alt.Chart(nonzero_df)
         .mark_circle(color="#1f77b4", opacity=0.75, size=70)
         .encode(
             x="date:T",

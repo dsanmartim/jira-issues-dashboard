@@ -39,6 +39,7 @@ class IssueModel:
     obs_subsystem: str | None
     obs_component: str | None
     labels: list[str] = field(default_factory=list)
+    watchers: list[str] = field(default_factory=list)  # List of watcher display names
     comments: list[CommentModel] = field(default_factory=list)
     histories: list[HistoryItemModel] = field(default_factory=list)
 

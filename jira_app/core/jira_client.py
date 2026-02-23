@@ -85,3 +85,62 @@ class JiraAPI:
         if isinstance(issue, dict):
             return issue
         raise RuntimeError(f"Unexpected issue payload type for {issue_key}: {type(issue)!r}")
+
+    def get_current_user(self) -> str | None:
+        """Get the display name of the currently authenticated user.
+
+        Returns
+        -------
+        str or None
+            The display name of the current user, or None if unavailable.
+        """
+        try:
+            user = self.client.myself()
+            if hasattr(user, "displayName"):
+                return user.displayName
+            if isinstance(user, dict):
+                return user.get("displayName")
+            return None
+        except JIRAError:  # pragma: no cover - network error path
+            return None
+
+    def get_issue_watchers(self, issue_key: str) -> list[str]:
+        """Get the list of watchers for an issue.
+
+        Parameters
+        ----------
+        issue_key : str
+            The Jira issue key (e.g., "OBS-123").
+
+        Returns
+        -------
+        list[str]
+            List of watcher display names.
+        """
+        try:
+            watchers = self.client.watchers(issue_key)
+            if hasattr(watchers, "watchers"):
+                return [
+                    w.displayName if hasattr(w, "displayName") else str(w) for w in watchers.watchers if w
+                ]
+            return []
+        except JIRAError:  # pragma: no cover - network error path
+            return []
+
+    def fetch_watchers_batch(self, issue_keys: list[str]) -> dict[str, list[str]]:
+        """Fetch watchers for multiple issues.
+
+        Parameters
+        ----------
+        issue_keys : list[str]
+            List of Jira issue keys.
+
+        Returns
+        -------
+        dict[str, list[str]]
+            Mapping of issue key to list of watcher display names.
+        """
+        result: dict[str, list[str]] = {}
+        for key in issue_keys:
+            result[key] = self.get_issue_watchers(key)
+        return result

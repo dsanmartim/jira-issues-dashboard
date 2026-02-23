@@ -119,6 +119,17 @@ def map_issue(raw: dict[str, Any]) -> IssueModel:
             )
         )
 
+    # Extract watchers if available (may need separate API call for full list)
+    watches_raw = fields.get("watches") or {}
+    watchers: list[str] = []
+    # If the API returns watcher details, extract display names
+    if isinstance(watches_raw, dict) and "watchers" in watches_raw:
+        for w in watches_raw.get("watchers", []) or []:
+            if isinstance(w, dict):
+                display_name = w.get("displayName")
+                if display_name:
+                    watchers.append(display_name)
+
     issue = IssueModel(
         key=raw.get("key"),
         summary=fields.get("summary"),
@@ -136,6 +147,7 @@ def map_issue(raw: dict[str, Any]) -> IssueModel:
         obs_subsystem=subsystem,
         obs_component=component,
         labels=list(fields.get("labels", []) or []),
+        watchers=watchers,
         comments=comments,
         histories=histories,
     )
@@ -165,6 +177,7 @@ def issues_to_dataframe(issues: Iterable[IssueModel]) -> pd.DataFrame:
                 "obs_subsystem": i.obs_subsystem,
                 "obs_component": i.obs_component,
                 "labels": i.labels,
+                "watchers": i.watchers,
                 "comments": [asdict(c) for c in i.comments],
                 "histories": [asdict(h) for h in i.histories],
             }
