@@ -30,3 +30,6 @@ dist/
 # Data files (keep if generated locally)
 data/*.json
 *.json
+
+# Manuscript managed separately through Overleaf/GitHub
+/manuscript/
